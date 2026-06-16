@@ -1,0 +1,39 @@
+{
+  "project_info": {
+    "project_number": "422571595222",
+    "project_id": "qatar-services",
+    "storage_bucket": "qatar-services.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:422571595222:android:cf2d61bbc8d3b0f13e8077",
+        "android_client_info": {
+          "package_name": "com.qatar.services"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "422571595222-nlt4ip2q6jbpe5al7olbqark0qhji4dh.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDr-Y1GV21ErpfGoC4X2EXT9uVumATVqVM"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "422571595222-nlt4ip2q6jbpe5al7olbqark0qhji4dh.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

@@ -1,122 +1,335 @@
 import 'package:flutter/material.dart';
+import 'package:firebase_core/firebase_core.dart';
+import 'screens/login_screen.dart';
+import 'screens/signup_screen.dart';
+import 'screens/client_register_screen.dart';
+import 'screens/create_listing_screen.dart';
+import 'screens/home_screen.dart';
+import 'screens/otp_screen.dart';
+import 'screens/email_verification_screen.dart';
+import 'services/token_service.dart';
+import 'services/auth_service.dart';
+import 'screens/reset_password_screen.dart';
+import 'package:app_links/app_links.dart';
+import 'dart:async';
 
-void main() {
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  try {
+    // On web, Firebase is initialized via index.html JS SDK.
+    // On mobile, we initialize with FirebaseOptions.
+    await Firebase.initializeApp(
+      options: const FirebaseOptions(
+        apiKey: 'AIzaSyDr-Y1GV21ErpfGoC4X2EXT9uVumATVqVM',
+        authDomain: 'qatar-services.firebaseapp.com',
+        projectId: 'qatar-services',
+        storageBucket: 'qatar-services.firebasestorage.app',
+        messagingSenderId: '422571595222',
+        appId: '1:422571595222:android:cf2d61bbc8d3b0f13e8077',
+      ),
+    );
+  } catch (e) {
+    // Firebase already initialized (web) — ignore duplicate app error
+    debugPrint('Firebase init: $e');
+  }
   runApp(const MyApp());
 }
 
 class MyApp extends StatelessWidget {
   const MyApp({super.key});
 
-  // This widget is the root of your application.
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Flutter Demo',
+      title: 'Qatar Services',
+      debugShowCheckedModeBanner: false,
       theme: ThemeData(
-        // This is the theme of your application.
-        //
-        // TRY THIS: Try running your application with "flutter run". You'll see
-        // the application has a purple toolbar. Then, without quitting the app,
-        // try changing the seedColor in the colorScheme below to Colors.green
-        // and then invoke "hot reload" (save your changes or press the "hot
-        // reload" button in a Flutter-supported IDE, or press "r" if you used
-        // the command line to start the app).
-        //
-        // Notice that the counter didn't reset back to zero; the application
-        // state is not lost during the reload. To reset the state, use hot
-        // restart instead.
-        //
-        // This works for code too, not just values: Most code changes can be
-        // tested with just a hot reload.
-        colorScheme: .fromSeed(seedColor: Colors.deepPurple),
+        colorScheme: ColorScheme.fromSeed(
+          seedColor: const Color(0xFF0D1F3C),
+          primary: const Color(0xFF0D1F3C),
+          secondary: const Color(0xFFC9A84C),
+        ),
+        useMaterial3: true,
       ),
-      home: const MyHomePage(title: 'Flutter Demo Home Page'),
+      home: const AppRouter(),
     );
   }
 }
 
-class MyHomePage extends StatefulWidget {
-  const MyHomePage({super.key, required this.title});
-
-  // This widget is the home page of your application. It is stateful, meaning
-  // that it has a State object (defined below) that contains fields that affect
-  // how it looks.
-
-  // This class is the configuration for the state. It holds the values (in this
-  // case the title) provided by the parent (in this case the App widget) and
-  // used by the build method of the State. Fields in a Widget subclass are
-  // always marked "final".
-
-  final String title;
+/// AppRouter: checks JWT token on launch and routes accordingly
+class AppRouter extends StatefulWidget {
+  const AppRouter({super.key});
 
   @override
-  State<MyHomePage> createState() => _MyHomePageState();
+  State<AppRouter> createState() => _AppRouterState();
 }
 
-class _MyHomePageState extends State<MyHomePage> {
-  int _counter = 0;
+class _AppRouterState extends State<AppRouter> {
+  String _screen = 'splash';
 
-  void _incrementCounter() {
-    setState(() {
-      // This call to setState tells the Flutter framework that something has
-      // changed in this State, which causes it to rerun the build method below
-      // so that the display can reflect the updated values. If we changed
-      // _counter without calling setState(), then the build method would not be
-      // called again, and so nothing would appear to happen.
-      _counter++;
+  // OTP params (set when phone login triggers OTP)
+  String? _otpPhone;
+  dynamic _otpConfirmationResult;
+  String? _otpVerificationId;
+
+  // Email verification params
+  String _pendingEmail = '';
+
+  // Deep linking and password reset
+  StreamSubscription<Uri>? _linkSubscription;
+  String? _resetPasswordCode;
+
+  @override
+  void initState() {
+    super.initState();
+    _checkToken();
+    _initDeepLinking();
+  }
+
+  @override
+  void dispose() {
+    _linkSubscription?.cancel();
+    super.dispose();
+  }
+
+  void _initDeepLinking() {
+    final appLinks = AppLinks();
+
+    // Check initial link (cold start)
+    appLinks.getInitialLink().then((uri) {
+      if (uri != null) {
+        _handleDeepLink(uri);
+      }
     });
+
+    // Listen to incoming links (warm start)
+    _linkSubscription = appLinks.uriLinkStream.listen((uri) {
+      _handleDeepLink(uri);
+    });
+  }
+
+  void _handleDeepLink(Uri uri) {
+    debugPrint('Deep Link received: $uri');
+
+    // Firebase Dynamic Links may wrap the real URL inside a 'link' query param
+    Uri targetUri = uri;
+    final linkParam = uri.queryParameters['link'];
+    if (linkParam != null) {
+      try {
+        targetUri = Uri.parse(linkParam);
+        debugPrint('Unwrapped Dynamic Link: $targetUri');
+      } catch (_) {}
+    }
+
+    final mode = targetUri.queryParameters['mode'];
+    final oobCode = targetUri.queryParameters['oobCode'];
+
+    // Route to reset password screen if:
+    // 1. Firebase action URL with mode=resetPassword
+    // 2. Custom scheme qatarservices://reset-password?oobCode=...
+    // 3. Any link containing oobCode with resetPassword mode
+    if (oobCode != null &&
+        (mode == 'resetPassword' ||
+         targetUri.path.contains('reset-password') ||
+         targetUri.host == 'reset-password' ||
+         targetUri.path.contains('auth/action'))) {
+      debugPrint('Navigating to reset password with oobCode: $oobCode');
+      setState(() {
+        _resetPasswordCode = oobCode;
+        _screen = 'reset_password';
+      });
+    }
+  }
+
+  /// On launch: if JWT exists → home, else → login
+  Future<void> _checkToken() async {
+    final hasToken = await TokenService.hasToken();
+    if (!mounted) return;
+
+    if (hasToken) {
+      // Validate token with backend profile endpoint
+      final profileResult = await AuthService.getProfile();
+      if (!mounted) return;
+      if (profileResult.success) {
+        setState(() => _screen = 'home');
+        return;
+      }
+      // Token expired or invalid → clear and go to login
+      await TokenService.clearAll();
+    }
+    if (mounted) setState(() => _screen = 'login');
+  }
+
+  void _go(String screen) => setState(() => _screen = screen);
+
+  void _showSnack(String msg, {bool success = true}) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text(msg),
+      backgroundColor: success ? const Color(0xFF2D9B6F) : const Color(0xFFEF4444),
+      behavior: SnackBarBehavior.floating,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+    ));
   }
 
   @override
   Widget build(BuildContext context) {
-    // This method is rerun every time setState is called, for instance as done
-    // by the _incrementCounter method above.
-    //
-    // The Flutter framework has been optimized to make rerunning build methods
-    // fast, so that you can just rebuild anything that needs updating rather
-    // than having to individually change instances of widgets.
-    return Scaffold(
-      appBar: AppBar(
-        // TRY THIS: Try changing the color here to a specific color (to
-        // Colors.amber, perhaps?) and trigger a hot reload to see the AppBar
-        // change color while the other colors stay the same.
-        backgroundColor: Theme.of(context).colorScheme.inversePrimary,
-        // Here we take the value from the MyHomePage object that was created by
-        // the App.build method, and use it to set our appbar title.
-        title: Text(widget.title),
-      ),
-      body: Center(
-        // Center is a layout widget. It takes a single child and positions it
-        // in the middle of the parent.
-        child: Column(
-          // Column is also a layout widget. It takes a list of children and
-          // arranges them vertically. By default, it sizes itself to fit its
-          // children horizontally, and tries to be as tall as its parent.
-          //
-          // Column has various properties to control how it sizes itself and
-          // how it positions its children. Here we use mainAxisAlignment to
-          // center the children vertically; the main axis here is the vertical
-          // axis because Columns are vertical (the cross axis would be
-          // horizontal).
-          //
-          // TRY THIS: Invoke "debug painting" (choose the "Toggle Debug Paint"
-          // action in the IDE, or press "p" in the console), to see the
-          // wireframe for each widget.
-          mainAxisAlignment: .center,
-          children: [
-            const Text('You have pushed the button this many times:'),
-            Text(
-              '$_counter',
-              style: Theme.of(context).textTheme.headlineMedium,
+    // ── Splash / Loading ──────────────────────────────────────────────────
+    if (_screen == 'splash') {
+      return const Scaffold(
+        backgroundColor: Color(0xFF0D1F3C),
+        body: Center(
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            _QsLogo(),
+            SizedBox(height: 32),
+            CircularProgressIndicator(
+              color: Color(0xFFC9A84C),
+              strokeWidth: 2.5,
             ),
-          ],
+          ]),
         ),
+      );
+    }
+
+    // ── Login ─────────────────────────────────────────────────────────────
+    if (_screen == 'login') {
+      return LoginScreen(
+        onSuccess: () {
+          _showSnack('Connexion réussie !');
+          _go('home');
+        },
+        onRegister: () => _go('client_register'),
+        onOtp: (phone, confirmationResult, verificationId) {
+          setState(() {
+            _otpPhone = phone;
+            _otpConfirmationResult = confirmationResult;
+            _otpVerificationId = verificationId;
+            _screen = 'otp';
+          });
+        },
+        onEmailVerify: (email) {
+          setState(() {
+            _pendingEmail = email;
+            _screen = 'email_verify';
+          });
+        },
+      );
+    }
+
+    // ── OTP ───────────────────────────────────────────────────────────────
+    if (_screen == 'otp') {
+      return OtpScreen(
+        phoneNumber: _otpPhone ?? '',
+        confirmationResult: _otpConfirmationResult,
+        verificationId: _otpVerificationId,
+        onSuccess: () {
+          _showSnack('Vérification réussie !');
+          _go('home');
+        },
+        onBack: () => _go('login'),
+      );
+    }
+
+    // ── Signup ────────────────────────────────────────────────────────────
+    if (_screen == 'signup') {
+      return SignupScreen(
+        onBack: () => _go('login'),
+        onSuccess: (String email) {
+          setState(() {
+            _pendingEmail = email;
+            _screen = 'email_verify';
+          });
+        },
+      );
+    }
+
+    // ── Client Register ───────────────────────────────────────────────────
+    if (_screen == 'client_register') {
+      return ClientRegisterScreen(
+        onBack: () => _go('login'),
+        onSuccess: (String email) {
+          setState(() {
+            _pendingEmail = email;
+            _screen = 'email_verify';
+          });
+        },
+      );
+    }
+
+    // ── Email Verification ───────────────────────────────────────────────
+    if (_screen == 'email_verify') {
+      return EmailVerificationScreen(
+        email: _pendingEmail,
+        onVerified: () {
+          _showSnack('Email vérifié ! Connectez-vous maintenant.');
+          _go('login');
+        },
+        onBack: () => _go('login'),
+      );
+    }
+
+    // ── Create Listing ────────────────────────────────────────────────────
+    if (_screen == 'create_listing') {
+      return CreateListingScreen(
+        onBack: () => _go('home'),
+        onSuccess: () {
+          _showSnack('Annonce publiée !');
+          _go('home');
+        },
+      );
+    }
+
+    // ── Home ──────────────────────────────────────────────────────────────
+    if (_screen == 'home') {
+      return HomeScreen(
+        onLogout: () async {
+          await AuthService.logout();
+          _showSnack('Déconnecté avec succès.');
+          _go('login');
+        },
+      );
+    }
+
+    // ── Reset Password ───────────────────────────────────────────────────
+    if (_screen == 'reset_password' && _resetPasswordCode != null) {
+      return ResetPasswordScreen(
+        oobCode: _resetPasswordCode!,
+        onBackToLogin: () {
+          setState(() {
+            _resetPasswordCode = null;
+            _screen = 'login';
+          });
+        },
+        onLoginSuccess: () {
+          setState(() {
+            _resetPasswordCode = null;
+            _screen = 'home';
+          });
+        },
+      );
+    }
+
+    // Fallback
+    return const SizedBox.shrink();
+  }
+}
+
+/// Qatar Services Logo Widget
+class _QsLogo extends StatelessWidget {
+  const _QsLogo();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 80, height: 80,
+      decoration: BoxDecoration(
+        color: const Color(0xFFC9A84C),
+        borderRadius: BorderRadius.circular(20),
+        boxShadow: [BoxShadow(color: const Color(0xFFC9A84C).withOpacity(0.4), blurRadius: 24, offset: const Offset(0, 8))],
       ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: _incrementCounter,
-        tooltip: 'Increment',
-        child: const Icon(Icons.add),
-      ),
+      alignment: Alignment.center,
+      child: const Text('QS',
+          style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 28)),
     );
   }
 }
