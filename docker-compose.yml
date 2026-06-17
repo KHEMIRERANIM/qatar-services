@@ -10,6 +10,9 @@ services:
       - DB_USER=root
       - DB_PASSWORD=root
       - DB_NAME=qatar_services
+      - JWT_SECRET=qatar_services_secret_key
+      - JWT_EXPIRE=24h
+      - JWT_REFRESH_EXPIRE=7d
     depends_on:
       - mysql
     volumes:

@@ -298,4 +298,70 @@ class AuthService {
       return AuthResult(success: false, message: 'Erreur réseau.');
     }
   }
+
+  // POST /auth/check-phone
+  static Future<AuthResult> checkPhone(String phone) async {
+    try {
+      final response = await http
+          .post(
+            Uri.parse('$baseUrl/auth/check-phone'),
+            headers: _headers,
+            body: jsonEncode({'telephone': phone}),
+          )
+          .timeout(_timeout);
+
+      Map<String, dynamic> data;
+      try {
+        data = jsonDecode(response.body) as Map<String, dynamic>;
+      } catch (_) {
+        return AuthResult(success: false, message: 'Erreur du serveur');
+      }
+
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        return AuthResult(success: true, data: data);
+      }
+      return AuthResult(
+        success: false,
+        message: data['message'] ?? 'Numéro non reconnu',
+      );
+    } on TimeoutException {
+      return AuthResult(success: false, message: 'Délai dépassé.');
+    } catch (e) {
+      return AuthResult(success: false, message: 'Erreur réseau.');
+    }
+  }
+
+  // POST /auth/login-phone
+  static Future<AuthResult> loginPhone(String phone) async {
+    try {
+      final response = await http
+          .post(
+            Uri.parse('$baseUrl/auth/login-phone'),
+            headers: _headers,
+            body: jsonEncode({'telephone': phone}),
+          )
+          .timeout(_timeout);
+
+      Map<String, dynamic> data;
+      try {
+        data = jsonDecode(response.body) as Map<String, dynamic>;
+      } catch (_) {
+        return AuthResult(success: false, message: 'Erreur du serveur');
+      }
+
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        final token = data['token'] ?? data['access_token'];
+        if (token != null) await TokenService.saveToken(token.toString());
+        return AuthResult(success: true, data: data);
+      }
+      return AuthResult(
+        success: false,
+        message: data['message'] ?? 'Erreur d\'authentification',
+      );
+    } on TimeoutException {
+      return AuthResult(success: false, message: 'Délai dépassé.');
+    } catch (e) {
+      return AuthResult(success: false, message: 'Erreur réseau.');
+    }
+  }
 }

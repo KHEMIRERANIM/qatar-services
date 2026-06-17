@@ -1,0 +1,12 @@
+[
+  {
+    "relation": ["delegate_permission/common.handle_all_urls"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "com.qatar.services",
+      "sha256_cert_fingerprints": [
+        "9F:74:68:A2:ED:0D:CA:E5:79:F7:07:3A:F2:2A:AE:D7:76:A7:CF:FE:B1:FD:BE:F3:79:A7:AE:84:32:5D:8F:AD"
+      ]
+    }
+  }
+]

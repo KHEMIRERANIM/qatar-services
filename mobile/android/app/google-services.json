@@ -14,6 +14,14 @@
       },
       "oauth_client": [
         {
+          "client_id": "422571595222-fgqmc9kabmd8gumqjjbd7ev5kka72auk.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.qatar.services",
+            "certificate_hash": "f3da08a30c88c6e0efd67a827fabf670eab1a41e"
+          }
+        },
+        {
           "client_id": "422571595222-nlt4ip2q6jbpe5al7olbqark0qhji4dh.apps.googleusercontent.com",
           "client_type": 3
         }

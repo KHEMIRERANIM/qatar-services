@@ -24,10 +24,16 @@ class LoginScreen extends StatefulWidget {
 class _LoginScreenState extends State<LoginScreen> {
   final _identifierCtrl = TextEditingController();
   final _passwordCtrl = TextEditingController();
+  final _phoneCtrl = TextEditingController();
+
+  int _activeTab = 0; // 0 = Email + MDP, 1 = Téléphone + OTP
+  String _selectedCountryCode = '+974';
   bool _showPwd = false;
   bool _isLoading = false;
+
   String? _identifierError;
   String? _passwordError;
+  String? _phoneError;
   String? _globalError;
 
   static final _phoneReg = RegExp(r'^\+?[0-9]{8,15}$');
@@ -37,6 +43,7 @@ class _LoginScreenState extends State<LoginScreen> {
   void dispose() {
     _identifierCtrl.dispose();
     _passwordCtrl.dispose();
+    _phoneCtrl.dispose();
     super.dispose();
   }
 
@@ -193,6 +200,99 @@ class _LoginScreenState extends State<LoginScreen> {
         },
         codeAutoRetrievalTimeout: (_) {},
       );
+    }
+  }
+
+  // ─── CHECK PHONE + SEND OTP ───────────────────────────────────────────────
+  Future<void> _sendPhoneOtpChecked() async {
+    final phoneNum = _phoneCtrl.text.trim();
+    if (phoneNum.isEmpty) {
+      setState(() => _phoneError = 'Champ requis');
+      return;
+    }
+    setState(() {
+      _isLoading = true;
+      _phoneError = null;
+      _globalError = null;
+    });
+
+    final fullPhone = '$_selectedCountryCode$phoneNum';
+
+    // 3. Node.js vérifie si téléphone existe dans MySQL
+    final checkResult = await AuthService.checkPhone(fullPhone);
+
+    if (!checkResult.success) {
+      setState(() {
+        _isLoading = false;
+        _globalError = checkResult.message ?? 'Numéro non reconnu';
+        // supprime le mot ou telephone dans le login mail+mdp
+        _identifierCtrl.clear();
+        _passwordCtrl.clear();
+      });
+      _showSnack(checkResult.message ?? 'Numéro non reconnu', success: false);
+      return;
+    }
+
+    // 4. Si oui → Firebase envoie SMS
+    try {
+      try {
+        final confirmationResult = await FirebaseAuth.instance.signInWithPhoneNumber(fullPhone);
+        if (mounted) {
+          setState(() => _isLoading = false);
+          widget.onOtp(fullPhone, confirmationResult, null);
+        }
+      } on FirebaseAuthException catch (e) {
+        if (mounted) {
+          setState(() {
+            _isLoading = false;
+            _globalError = _mapFirebaseError(e.code);
+          });
+        }
+      } catch (_) {
+        // Fallback for non-web: verifyPhoneNumber
+        FirebaseAuth.instance.verifyPhoneNumber(
+          phoneNumber: fullPhone,
+          verificationCompleted: (cred) async {
+            await FirebaseAuth.instance.signInWithCredential(cred);
+            final backendLoginRes = await AuthService.loginPhone(fullPhone);
+            if (mounted) {
+              setState(() => _isLoading = false);
+              if (backendLoginRes.success) {
+                _showSnack('Connexion réussie !', success: true);
+                widget.onSuccess();
+              } else {
+                setState(() => _globalError = backendLoginRes.message);
+              }
+            }
+          },
+          verificationFailed: (e) {
+            if (mounted) {
+              setState(() {
+                _isLoading = false;
+                _globalError = _mapFirebaseError(e.code);
+              });
+            }
+          },
+          codeSent: (verificationId, _) {
+            if (mounted) {
+              setState(() => _isLoading = false);
+              widget.onOtp(fullPhone, null, verificationId);
+            }
+          },
+          codeAutoRetrievalTimeout: (_) {
+            if (mounted) {
+              setState(() => _isLoading = false);
+            }
+          },
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+          _globalError = 'Erreur lors de l\'envoi du code OTP';
+        });
+      }
     }
   }
 
@@ -444,48 +544,139 @@ class _LoginScreenState extends State<LoginScreen> {
                   ]),
                   const SizedBox(height: 20),
 
+                  // Segmented sliding toggle for login method
+                  Container(
+                    height: 46,
+                    padding: const EdgeInsets.all(4),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFE8EDF5),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: GestureDetector(
+                            onTap: () => setState(() {
+                              _activeTab = 0;
+                              _globalError = null;
+                            }),
+                            child: Container(
+                              alignment: Alignment.center,
+                              decoration: BoxDecoration(
+                                color: _activeTab == 0 ? Colors.white : Colors.transparent,
+                                borderRadius: BorderRadius.circular(9),
+                                boxShadow: _activeTab == 0
+                                    ? [
+                                        BoxShadow(
+                                          color: Colors.black.withOpacity(0.05),
+                                          blurRadius: 4,
+                                          offset: const Offset(0, 2),
+                                        )
+                                      ]
+                                    : null,
+                              ),
+                              child: Text(
+                                'Email',
+                                style: TextStyle(
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.bold,
+                                  color: _activeTab == 0 ? const Color(0xFF0D1F3C) : const Color(0xFF6B7A99),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                        Expanded(
+                          child: GestureDetector(
+                            onTap: () => setState(() {
+                              _activeTab = 1;
+                              _globalError = null;
+                            }),
+                            child: Container(
+                              alignment: Alignment.center,
+                              decoration: BoxDecoration(
+                                color: _activeTab == 1 ? Colors.white : Colors.transparent,
+                                borderRadius: BorderRadius.circular(9),
+                                boxShadow: _activeTab == 1
+                                    ? [
+                                        BoxShadow(
+                                          color: Colors.black.withOpacity(0.05),
+                                          blurRadius: 4,
+                                          offset: const Offset(0, 2),
+                                        )
+                                      ]
+                                    : null,
+                              ),
+                              child: Text(
+                                'Téléphone',
+                                style: TextStyle(
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.bold,
+                                  color: _activeTab == 1 ? const Color(0xFF0D1F3C) : const Color(0xFF6B7A99),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 20),
+
                   // Global error
                   if (_globalError != null) ...[
                     _errorBanner(_globalError!),
                     const SizedBox(height: 16),
                   ],
 
-                  // Identifier
-                  _label('Email ou téléphone'),
-                  _inputBox(
-                    controller: _identifierCtrl,
-                    icon: Icons.mail_outline,
-                    hint: '+974 5XXX XXXX ou email',
-                    error: _identifierError,
-                    keyboardType: TextInputType.emailAddress,
-                  ),
-                  if (_identifierError != null) _errText(_identifierError!),
-                  const SizedBox(height: 14),
-
-                  // Password
-                  _label('Mot de passe'),
-                  _passwordBox(),
-                  if (_passwordError != null) _errText(_passwordError!),
-
-                  // Forgot password
-                  Align(
-                    alignment: Alignment.centerRight,
-                    child: TextButton(
-                      onPressed: _showForgotPasswordDialog,
-                      style: TextButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(vertical: 8),
-                        minimumSize: Size.zero,
-                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                      ),
-                      child: const Text('Mot de passe oublié ?',
-                          style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Color(0xFFC9A84C))),
+                  if (_activeTab == 0) ...[
+                    // Identifier
+                    _label('Email'),
+                    _inputBox(
+                      controller: _identifierCtrl,
+                      icon: Icons.mail_outline,
+                      hint: '+974 5XXX XXXX ou email',
+                      error: _identifierError,
+                      keyboardType: TextInputType.emailAddress,
                     ),
-                  ),
-                  const SizedBox(height: 16),
+                    if (_identifierError != null) _errText(_identifierError!),
+                    const SizedBox(height: 14),
 
-                  // Submit
-                  _submitButton(),
-                  const SizedBox(height: 24),
+                    // Password
+                    _label('Mot de passe'),
+                    _passwordBox(),
+                    if (_passwordError != null) _errText(_passwordError!),
+
+                    // Forgot password
+                    Align(
+                      alignment: Alignment.centerRight,
+                      child: TextButton(
+                        onPressed: _showForgotPasswordDialog,
+                        style: TextButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(vertical: 8),
+                          minimumSize: Size.zero,
+                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        ),
+                        child: const Text('Mot de passe oublié ?',
+                            style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Color(0xFFC9A84C))),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+
+                    // Submit
+                    _submitButton(),
+                    const SizedBox(height: 24),
+                  ] else ...[
+                    // Phone number connection
+                    _label('Numéro de téléphone'),
+                    _phoneInputBox(),
+                    if (_phoneError != null) _errText(_phoneError!),
+                    const SizedBox(height: 24),
+
+                    // Submit par SMS
+                    _smsSubmitButton(),
+                    const SizedBox(height: 24),
+                  ],
 
                   // Sign up
                   Row(mainAxisAlignment: MainAxisAlignment.center, children: [
@@ -656,6 +847,100 @@ class _LoginScreenState extends State<LoginScreen> {
             Text(label,
                 style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Color(0xFF0D1F3C))),
           ]),
+        ),
+      );
+
+  Widget _phoneInputBox() {
+    return Container(
+      height: 52,
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: _phoneError != null ? const Color(0xFFEF4444) : const Color(0xFF0D1F3C).withOpacity(0.12),
+        ),
+      ),
+      child: Row(
+        children: [
+          const SizedBox(width: 12),
+          DropdownButtonHideUnderline(
+            child: DropdownButton<String>(
+              value: _selectedCountryCode,
+              icon: const Icon(Icons.keyboard_arrow_down, size: 16, color: Color(0xFF6B7A99)),
+              style: const TextStyle(fontSize: 14, color: Color(0xFF0D1F3C), fontWeight: FontWeight.bold),
+              onChanged: (String? newValue) {
+                if (newValue != null) {
+                  setState(() { _selectedCountryCode = newValue; });
+                }
+              },
+              items: <Map<String, String>>[
+                {'code': '+974', 'flag': '🇶🇦'},
+                {'code': '+33', 'flag': '🇫🇷'},
+                {'code': '+216', 'flag': '🇹🇳'},
+                {'code': '+212', 'flag': '🇲🇦'},
+                {'code': '+213', 'flag': '🇩🇿'},
+                {'code': '+971', 'flag': '🇦🇪'},
+                {'code': '+966', 'flag': '🇸🇦'},
+              ].map<DropdownMenuItem<String>>((Map<String, String> item) {
+                return DropdownMenuItem<String>(
+                  value: item['code'],
+                  child: Text('${item['flag']} ${item['code']}'),
+                );
+              }).toList(),
+            ),
+          ),
+          Container(
+            width: 1,
+            height: 24,
+            color: const Color(0xFF0D1F3C).withOpacity(0.12),
+            margin: const EdgeInsets.symmetric(horizontal: 10),
+          ),
+          Expanded(
+            child: TextField(
+              controller: _phoneCtrl,
+              keyboardType: TextInputType.phone,
+              style: const TextStyle(fontSize: 15, color: Color(0xFF0D1F3C)),
+              decoration: const InputDecoration(
+                hintText: "5XXX XXXX",
+                hintStyle: TextStyle(color: Color(0xFFA0ABBE)),
+                border: InputBorder.none,
+                isDense: true,
+                contentPadding: EdgeInsets.zero,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _smsSubmitButton() => Container(
+        decoration: BoxDecoration(
+          gradient: const LinearGradient(
+            colors: [Color(0xFF0D1F3C), Color(0xFF1A3560)],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
+          borderRadius: BorderRadius.circular(16),
+          boxShadow: [BoxShadow(color: const Color(0xFF0D1F3C).withOpacity(0.28), blurRadius: 24, offset: const Offset(0, 8))],
+        ),
+        child: ElevatedButton(
+          onPressed: _isLoading ? null : _sendPhoneOtpChecked,
+          style: ElevatedButton.styleFrom(
+            backgroundColor: Colors.transparent,
+            shadowColor: Colors.transparent,
+            padding: const EdgeInsets.symmetric(vertical: 16),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          ),
+          child: _isLoading
+              ? const SizedBox(width: 22, height: 22,
+                  child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2.5))
+              : const Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+                  Text('Connexion par SMS',
+                      style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: Colors.white)),
+                  SizedBox(width: 8),
+                  Icon(Icons.sms_outlined, color: Colors.white, size: 18),
+                ]),
         ),
       );
 }

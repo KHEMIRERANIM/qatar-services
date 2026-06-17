@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import '../services/token_service.dart';
+import '../services/auth_service.dart';
 
 class OtpScreen extends StatefulWidget {
   final String phoneNumber;
@@ -133,6 +134,14 @@ class _OtpScreenState extends State<OtpScreen> with SingleTickerProviderStateMix
       } else {
         // Demo fallback (no Firebase configured)
         await Future.delayed(const Duration(milliseconds: 1000));
+      }
+
+      // Generate Backend JWT token after successful Firebase verification
+      final loginRes = await AuthService.loginPhone(widget.phoneNumber);
+      if (!loginRes.success) {
+        setState(() => _error = loginRes.message ?? 'Échec connexion backend');
+        _shakeCtrl.forward(from: 0);
+        return;
       }
 
       if (mounted) widget.onSuccess();
