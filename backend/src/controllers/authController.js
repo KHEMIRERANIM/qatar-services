@@ -196,7 +196,22 @@ exports.profile = async (req, res) => {
       [req.user.id]
     )
 
-    res.json({ user: users[0] })
+    const [prestataires] = await db.query(
+      'SELECT statut_verification, badge_verifie FROM prestataires WHERE user_id = ?',
+      [req.user.id]
+    )
+
+    const user = users[0] || {}
+    const isPro = prestataires.length > 0 && prestataires[0].badge_verifie === 1
+
+    res.json({
+      user: {
+        ...user,
+        role: isPro ? 'pro' : 'client',
+        isPro,
+        statut_verification: prestataires[0]?.statut_verification || 'non_demande',
+      },
+    })
 
   } catch (error) {
     res.status(500).json({ message: error.message })

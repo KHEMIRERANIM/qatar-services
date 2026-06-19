@@ -19,7 +19,7 @@ class AuthResult {
 
 class AuthService {
   // Utilisez 10.0.2.2 pour l'émulateur Android. (Utilisez l'IP locale ex: 192.168.1.X pour un vrai téléphone)
-  static const String baseUrl = 'http://10.0.2.2:3000';
+static const String baseUrl = 'http://192.168.1.16:3000';
   static const Duration _timeout = Duration(seconds: 15);
 
   static Map<String, String> get _headers => {'Content-Type': 'application/json'};
