@@ -83,6 +83,7 @@ class AnnonceService {
     double? prix,
     String? ville,
     List<String>? photos,
+    String? typePaiement,
   }) async {
     try {
       final headers = await _authHeaders();
@@ -93,6 +94,7 @@ class AnnonceService {
         if (prix != null) 'prix': prix,
         if (ville != null && ville.isNotEmpty) 'ville': ville,
         if (photos != null && photos.isNotEmpty) 'photos': photos,
+        if (typePaiement != null) 'type_paiement': typePaiement,
       };
       final response = await http
           .post(Uri.parse('$baseUrl/api/annonces'),
@@ -183,20 +185,33 @@ class AnnonceService {
   }
 
   // POST /api/annonces/:id/commentaires
-  static Future<AnnonceResult> addCommentaire(int annonceId, String contenu) async {
+  static Future<AnnonceResult> addCommentaire(int annonceId, String contenu, String type) async {
     try {
+      final token = await TokenService.getToken();
+      if (token == null || token.isEmpty) {
+        return AnnonceResult(success: false, message: 'Connectez-vous pour commenter.');
+      }
       final headers = await _authHeaders();
       final response = await http
           .post(Uri.parse('$baseUrl/api/annonces/$annonceId/commentaires'),
-              headers: headers, body: jsonEncode({'contenu': contenu}))
+              headers: headers, body: jsonEncode({'contenu': contenu, 'type': type}))
           .timeout(_timeout);
-      final data = jsonDecode(response.body);
-      if (response.statusCode == 201) return AnnonceResult(success: true, data: data['data']);
-      return AnnonceResult(success: false, message: data['message'] ?? 'Erreur commentaire');
+      Map<String, dynamic> data = {};
+      try {
+        final decoded = jsonDecode(response.body);
+        if (decoded is Map<String, dynamic>) data = decoded;
+      } catch (_) {}
+      if (response.statusCode == 201) {
+        return AnnonceResult(success: true, data: data['data'], message: data['message']?.toString());
+      }
+      return AnnonceResult(
+        success: false,
+        message: data['message']?.toString() ?? 'Erreur commentaire (${response.statusCode})',
+      );
     } on TimeoutException {
       return AnnonceResult(success: false, message: 'Délai dépassé.');
     } catch (e) {
-      return AnnonceResult(success: false, message: 'Erreur réseau.');
+      return AnnonceResult(success: false, message: 'Erreur réseau: $e');
     }
   }
 

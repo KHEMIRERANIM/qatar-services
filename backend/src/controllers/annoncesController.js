@@ -33,15 +33,19 @@ exports.getFeed = async (req, res) => {
     let sql = `
       SELECT 
         a.id, 
-        a.titre, 
-        a.prix, 
+        a.titre,
+        a.description,
+        a.categorie,
+        a.prix,
         a.ville, 
+        a.type_paiement,
         a.created_at,
         (SELECT url FROM annonce_photos WHERE annonce_id = a.id ORDER BY ordre ASC, id ASC LIMIT 1) AS premiere_photo,
         (SELECT COUNT(*) FROM annonce_likes WHERE annonce_id = a.id) AS nb_likes,
         (SELECT COUNT(*) FROM commentaires WHERE annonce_id = a.id) AS nb_commentaires,
         CONCAT(u.prenom, ' ', u.nom) AS nom_user,
-        u.photo AS avatar_user
+        u.photo AS avatar_user,
+        u.telephone AS tel_user
       FROM annonces a
       LEFT JOIN users u ON a.user_id = u.id
       WHERE a.statut = 'active'
@@ -101,7 +105,7 @@ exports.getFeed = async (req, res) => {
 // POST /api/annonces - Créer une annonce (authentifié)
 exports.createAnnonce = async (req, res) => {
   try {
-    const { titre, description, categorie, prix, ville, photos } = req.body;
+    const { titre, description, categorie, prix, ville, photos, type_paiement } = req.body;
 
     if (!titre || !description) {
       return res.status(400).json({ success: false, message: 'Le titre et la description sont requis.' });
@@ -109,9 +113,9 @@ exports.createAnnonce = async (req, res) => {
 
     // Insérer l'annonce
     const [result] = await db.query(
-      `INSERT INTO annonces (user_id, titre, description, categorie, prix, ville, statut) 
-       VALUES (?, ?, ?, ?, ?, ?, 'active')`,
-      [req.user.id, titre, description, categorie || null, prix || null, ville || null]
+      `INSERT INTO annonces (user_id, titre, description, categorie, prix, ville, type_paiement, statut) 
+       VALUES (?, ?, ?, ?, ?, ?, ?, 'active')`,
+      [req.user.id, titre, description, categorie || null, prix || null, ville || null, type_paiement || 'Espèces']
     );
 
     const annonceId = result.insertId;
@@ -145,7 +149,7 @@ exports.getDetail = async (req, res) => {
     // 1. Récupérer les infos principales de l'annonce
     const [annonces] = await db.query(
       `SELECT 
-        a.id, a.user_id, a.titre, a.description, a.categorie, a.prix, a.ville, a.statut, a.created_at,
+        a.id, a.user_id, a.titre, a.description, a.categorie, a.prix, a.ville, a.type_paiement, a.statut, a.created_at,
         CONCAT(u.prenom, ' ', u.nom) AS nom_user,
         u.photo AS avatar_user
        FROM annonces a
@@ -169,9 +173,10 @@ exports.getDetail = async (req, res) => {
     // 3. Récupérer les commentaires
     const [commentaires] = await db.query(
       `SELECT 
-        c.id, c.user_id, c.contenu, c.created_at,
+        c.id, c.user_id, c.contenu, c.type, c.created_at,
         CONCAT(u.prenom, ' ', u.nom) AS nom_user,
-        u.photo AS avatar_user
+        u.photo AS avatar_user,
+        u.telephone AS tel_user
        FROM commentaires c
        LEFT JOIN users u ON c.user_id = u.id
        WHERE c.annonce_id = ?
@@ -192,8 +197,17 @@ exports.getDetail = async (req, res) => {
     );
 
     // 5. Calculer le statut d'appartenance et de like de l'utilisateur connecté
-    const is_owner = req.user ? (req.user.id === annonce.user_id) : false;
-    const is_liked = req.user ? likes.some(l => l.user_id === req.user.id) : false;
+    const is_owner = req.user ? (Number(req.user.id) === Number(annonce.user_id)) : false;
+    const is_liked = req.user ? likes.some(l => Number(l.user_id) === Number(req.user.id)) : false;
+
+    // Commentaires : visibles par le propriétaire + l'auteur de chaque commentaire
+    const currentUserId = req.user ? Number(req.user.id) : null;
+    const filteredCommentaires = commentaires.filter(c => {
+      const type = c.type || 'commentaire';
+      if (type !== 'commentaire') return false;
+      if (currentUserId === null) return false;
+      return currentUserId === Number(annonce.user_id) || currentUserId === Number(c.user_id);
+    });
 
     res.json({
       success: true,
@@ -202,7 +216,7 @@ exports.getDetail = async (req, res) => {
         is_owner,
         is_liked,
         photos,
-        commentaires,
+        commentaires: filteredCommentaires,
         likes_count: likes.length,
         likes
       }
@@ -217,7 +231,7 @@ exports.getDetail = async (req, res) => {
 exports.updateAnnonce = async (req, res) => {
   try {
     const { id } = req.params;
-    const { titre, description, categorie, prix, ville, statut } = req.body;
+    const { titre, description, categorie, prix, ville, statut, type_paiement } = req.body;
 
     // Vérifier l'annonce
     const [annonces] = await db.query("SELECT user_id FROM annonces WHERE id = ?", [id]);
@@ -242,9 +256,10 @@ exports.updateAnnonce = async (req, res) => {
         categorie = COALESCE(?, categorie),
         prix = COALESCE(?, prix),
         ville = COALESCE(?, ville),
+        type_paiement = COALESCE(?, type_paiement),
         statut = COALESCE(?, statut)
        WHERE id = ?`,
-      [titre || null, description || null, categorie || null, prix || null, ville || null, statut || null, id]
+      [titre || null, description || null, categorie || null, prix || null, ville || null, type_paiement || null, statut || null, id]
     );
 
     res.json({ success: true, message: 'Annonce modifiée avec succès.' });
@@ -383,7 +398,7 @@ exports.toggleLike = async (req, res) => {
 exports.addCommentaire = async (req, res) => {
   try {
     const { id } = req.params;
-    const { contenu } = req.body;
+    const { contenu, type } = req.body;
     const userId = req.user.id;
 
     if (!contenu || contenu.trim() === '') {
@@ -402,10 +417,14 @@ exports.addCommentaire = async (req, res) => {
 
     const annonce = annonces[0];
 
-    // 2. Insérer le commentaire
+    if (Number(annonce.user_id) === Number(userId)) {
+      return res.status(403).json({ success: false, message: 'Vous ne pouvez pas commenter votre propre annonce.' });
+    }
+
+    // 2. Insérer le commentaire (type commentaire uniquement)
     const [result] = await db.query(
-      "INSERT INTO commentaires (annonce_id, user_id, contenu) VALUES (?, ?, ?)",
-      [id, userId, contenu]
+      "INSERT INTO commentaires (annonce_id, user_id, contenu, type) VALUES (?, ?, ?, ?)",
+      [id, userId, contenu, 'commentaire']
     );
 
     const commentId = result.insertId;
@@ -413,9 +432,10 @@ exports.addCommentaire = async (req, res) => {
     // 3. Récupérer les informations du commentaire inséré pour la réponse
     const [newComments] = await db.query(
       `SELECT 
-        c.id, c.user_id, c.contenu, c.created_at,
+        c.id, c.user_id, c.contenu, c.type, c.created_at,
         CONCAT(u.prenom, ' ', u.nom) AS nom_user,
-        u.photo AS avatar_user
+        u.photo AS avatar_user,
+        u.telephone AS tel_user
        FROM commentaires c
        LEFT JOIN users u ON c.user_id = u.id
        WHERE c.id = ?`,

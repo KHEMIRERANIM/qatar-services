@@ -7,6 +7,26 @@ const optionalAuthMiddleware = require('../middlewares/optionalAuthMiddleware');
 // Route publique - Feed paginé (authentification optionnelle pour filtrage "mes offres" / "offres des autres")
 router.get('/', optionalAuthMiddleware, annoncesController.getFeed);
 
+// TEMPORARY: Alter db endpoint
+router.get('/alter-db', async (req, res) => {
+  const db = require('../config/database');
+  try {
+    try {
+      await db.query(`ALTER TABLE commentaires ADD COLUMN type VARCHAR(20) DEFAULT 'commentaire'`);
+    } catch (e) {
+      if (e.code !== 'ER_DUP_FIELDNAME') throw e;
+    }
+    try {
+      await db.query(`ALTER TABLE annonces ADD COLUMN type_paiement VARCHAR(100) DEFAULT 'Espèces'`);
+    } catch (e) {
+      if (e.code !== 'ER_DUP_FIELDNAME') throw e;
+    }
+    res.json({ success: true, message: 'Tables altered successfully' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Route publique avec authentification facultative (pour is_owner et likes)
 router.get('/:id', optionalAuthMiddleware, annoncesController.getDetail);
 

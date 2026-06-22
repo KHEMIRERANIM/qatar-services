@@ -43,7 +43,15 @@ async function initDatabase() {
       // L'index existe déjà, pas d'action requise
     }
 
-    // 2. Lancement du job quotidien de nettoyage des tokens expirés (chaque 24h)
+    // 2. Colonne type sur commentaires (commentaires privés)
+    try {
+      await db.query(`ALTER TABLE commentaires ADD COLUMN type VARCHAR(20) DEFAULT 'commentaire'`);
+      console.log('✅ Colonne commentaires.type ajoutée');
+    } catch (e) {
+      if (e.code !== 'ER_DUP_FIELDNAME') throw e;
+    }
+
+    // 3. Lancement du job quotidien de nettoyage des tokens expirés (chaque 24h)
     setInterval(async () => {
       try {
         const [result] = await db.query('DELETE FROM tokens WHERE expire_le < NOW()');
