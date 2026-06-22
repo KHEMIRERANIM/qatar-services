@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'profile_screen.dart';
 import 'create_listing_screen.dart';
+import '../services/annonce_service.dart';
+import '../services/token_service.dart';
 
 class HomeScreen extends StatefulWidget {
   final VoidCallback onLogout;
@@ -14,12 +16,28 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> {
   int _currentIndex = 0;
 
-  // Active Category filter for Home Tab
+  // Filtre catégorie
   String _selectedCategory = "tous";
+  String _selectedFilter = "all"; // "all", "mine", "others"
+  bool _isLoggedIn = false;
 
-  // Search filter
+  // Recherche locale
   final _searchController = TextEditingController();
   String _searchQuery = "";
+
+  // Données réelles du feed
+  List<Map<String, dynamic>> _annonces = [];
+  bool _feedLoading = false;
+  String? _feedError;
+  int _currentPage = 1;
+  int _totalAnnonces = 0;
+  static const int _pageSize = 20;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadFeed();
+  }
 
   @override
   void dispose() {
@@ -27,84 +45,75 @@ class _HomeScreenState extends State<HomeScreen> {
     super.dispose();
   }
 
-  // List of mock services to display
-  final List<Map<String, dynamic>> _mockServices = [
-    {
-      "id": 1,
-      "title": "Plombier Express Doha",
-      "category": "plomberie",
-      "rating": "4.8",
-      "reviews": "14",
-      "price": "90 QAR/h",
-      "location": "Al Sadd, Doha",
-      "provider": "Ahmed Mansour",
-      "emoji": "🔧",
-      "isUrgent": true,
-    },
-    {
-      "id": 2,
-      "title": "Électricien Résidentiel",
-      "category": "electricite",
-      "rating": "4.9",
-      "reviews": "28",
-      "price": "100 QAR/h",
-      "location": "West Bay, Doha",
-      "provider": "Khalid Al-Thani",
-      "emoji": "⚡",
-      "isUrgent": false,
-    },
-    {
-      "id": 3,
-      "title": "Nettoyage Villa Complet",
-      "category": "nettoyage",
-      "rating": "4.7",
-      "reviews": "9",
-      "price": "350 QAR",
-      "location": "The Pearl, Doha",
-      "provider": "Fatima Cleaners",
-      "emoji": "🧹",
-      "isUrgent": true,
-    },
-    {
-      "id": 4,
-      "title": "Cours d'Arabe & Coran",
-      "category": "cours",
-      "rating": "5.0",
-      "reviews": "19",
-      "price": "120 QAR/h",
-      "location": "Lusail, Doha",
-      "provider": "Youssef Ibrahim",
-      "emoji": "📚",
-      "isUrgent": false,
-    },
-    {
-      "id": 5,
-      "title": "Peinture & Décoration",
-      "category": "peinture",
-      "rating": "4.6",
-      "reviews": "7",
-      "price": "400 QAR",
-      "location": "Al Rayyan, Doha",
-      "provider": "Bilal Art",
-      "emoji": "🎨",
-      "isUrgent": false,
-    },
-    {
-      "id": 6,
-      "title": "Livraison Rapide Colis",
-      "category": "livraison",
-      "rating": "4.8",
-      "reviews": "42",
-      "price": "30 QAR",
-      "location": "Doha City",
-      "provider": "Qatar Delivery",
-      "emoji": "🚚",
-      "isUrgent": false,
-    },
-  ];
+  Future<void> _loadFeed({bool reset = false}) async {
+    if (_feedLoading) return;
 
-  // Open Service details and Contact Dialog
-  void _showServiceDetails(Map<String, dynamic> service) {
+    final token = await TokenService.getToken();
+    final loggedIn = token != null;
+
+    setState(() {
+      _isLoggedIn = loggedIn;
+      _feedLoading = true;
+      _feedError = null;
+      if (reset) {
+        _annonces = [];
+        _currentPage = 1;
+      }
+    });
+
+    final result = await AnnonceService.getFeed(
+      page: _currentPage,
+      limit: _pageSize,
+      categorie: _selectedCategory == 'tous' ? null : _selectedCategory,
+      filter: _selectedFilter == 'all' ? null : _selectedFilter,
+    );
+
+    if (!mounted) return;
+
+    if (result.success) {
+      final data = result.data as Map<String, dynamic>;
+      final List<dynamic> newItems = data['data'] ?? [];
+      setState(() {
+        _feedLoading = false;
+        _totalAnnonces = data['total'] ?? 0;
+        if (reset) {
+          _annonces = List<Map<String, dynamic>>.from(newItems);
+        } else {
+          _annonces.addAll(List<Map<String, dynamic>>.from(newItems));
+        }
+      });
+    } else {
+      setState(() {
+        _feedLoading = false;
+        _feedError = result.message;
+      });
+    }
+  }
+
+  void _onCategoryChanged(String cat) {
+    setState(() {
+      _selectedCategory = cat;
+      _currentPage = 1;
+    });
+    _loadFeed(reset: true);
+  }
+
+  // ─── Emoji par catégorie ────────────────────────────────────────
+  String _categoryEmoji(String? cat) {
+    switch (cat) {
+      case 'plomberie': return '🔧';
+      case 'electricite': return '⚡';
+      case 'nettoyage': return '🧹';
+      case 'cours': return '📚';
+      case 'peinture': return '🎨';
+      case 'livraison': return '🚚';
+      case 'renovation': return '🏗️';
+      default: return '📦';
+    }
+  }
+
+  // ─── Afficher les détails d'une annonce réelle ──────────────────
+  void _showAnnonceDetails(Map<String, dynamic> annonce) {
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -113,125 +122,107 @@ class _HomeScreenState extends State<HomeScreen> {
         borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
       ),
       builder: (context) {
-        return Container(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Align(
-                alignment: Alignment.centerRight,
-                child: IconButton(
-                  onPressed: () => Navigator.pop(context),
-                  icon: const Icon(Icons.close, color: Color(0xFF6B7A99)),
-                ),
-              ),
-              Row(
+        final String titre = annonce['titre'] ?? '';
+        final String nomUser = annonce['nom_user'] ?? 'Inconnu';
+        final String prix = annonce['prix'] != null ? '${annonce['prix']} QAR' : 'Sur devis';
+        final String ville = annonce['ville'] ?? '';
+        final int nbLikes = annonce['nb_likes'] ?? 0;
+        final int nbCommentaires = annonce['nb_commentaires'] ?? 0;
+        final String? premierePhoto = annonce['premiere_photo'];
+        final String emoji = _categoryEmoji(annonce['categorie']);
+
+        return DraggableScrollableSheet(
+          expand: false,
+          initialChildSize: 0.6,
+          maxChildSize: 0.92,
+          builder: (_, controller) => SingleChildScrollView(
+            controller: controller,
+            child: Padding(
+              padding: const EdgeInsets.all(24),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
+                  // Handle bar
+                  Center(
+                    child: Container(
+                      width: 40, height: 4,
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFE8EDF5),
+                        borderRadius: BorderRadius.circular(2),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  // Photo ou emoji
+                  if (premierePhoto != null)
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(16),
+                      child: Image.network(
+                        premierePhoto,
+                        height: 180,
+                        fit: BoxFit.cover,
+                        errorBuilder: (_, __, ___) => Container(
+                          height: 180,
+                          color: const Color(0xFFF5F7FA),
+                          alignment: Alignment.center,
+                          child: Text(emoji, style: const TextStyle(fontSize: 60)),
+                        ),
+                      ),
+                    )
+                  else
+                    Container(
+                      height: 120,
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFF5F7FA),
+                        borderRadius: BorderRadius.circular(16),
+                      ),
+                      alignment: Alignment.center,
+                      child: Text(emoji, style: const TextStyle(fontSize: 60)),
+                    ),
+                  const SizedBox(height: 16),
+                  Text(titre,
+                    style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Color(0xFF0D1F3C)),
+                  ),
+                  const SizedBox(height: 4),
+                  Text('Proposé par $nomUser',
+                    style: const TextStyle(color: Color(0xFF6B7A99), fontSize: 13),
+                  ),
+                  const SizedBox(height: 16),
+                  Container(height: 1, color: const Color(0xFFE8EDF5)),
+                  const SizedBox(height: 16),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceAround,
+                    children: [
+                      _buildDetailMeta(Icons.monetization_on_outlined, 'Tarif', prix),
+                      if (ville.isNotEmpty)
+                        _buildDetailMeta(Icons.location_on_outlined, 'Ville', ville),
+                      _buildDetailMeta(Icons.favorite_border, 'Likes', nbLikes.toString()),
+                      _buildDetailMeta(Icons.chat_bubble_outline, 'Avis', nbCommentaires.toString()),
+                    ],
+                  ),
+                  const SizedBox(height: 24),
+                  // Bouton Contacter
                   Container(
-                    width: 56,
-                    height: 56,
                     decoration: BoxDecoration(
-                      color: const Color(0xFFFFFBEB),
+                      gradient: const LinearGradient(
+                        colors: [Color(0xFF0D1F3C), Color(0xFF1A3560)],
+                      ),
                       borderRadius: BorderRadius.circular(16),
                     ),
-                    alignment: Alignment.center,
-                    child: Text(service["emoji"], style: const TextStyle(fontSize: 28)),
-                  ),
-                  const SizedBox(width: 16),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          service["title"],
-                          style: const TextStyle(
-                            fontSize: 18,
-                            fontWeight: FontWeight.bold,
-                            color: Color(0xFF0D1F3C),
-                          ),
-                        ),
-                        const SizedBox(height: 4),
-                        Text(
-                          "Proposé par ${service["provider"]}",
-                          style: const TextStyle(color: Color(0xFF6B7A99), fontSize: 13),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 20),
-              Container(height: 1, color: const Color(0xFFE8EDF5)),
-              const SizedBox(height: 16),
-              // Price and Location
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  _buildDetailMeta(Icons.monetization_on_outlined, "Tarif", service["price"]),
-                  _buildDetailMeta(Icons.location_on_outlined, "Zone", service["location"]),
-                  _buildDetailMeta(Icons.star, "Note", "${service["rating"]} (${service["reviews"]})"),
-                ],
-              ),
-              const SizedBox(height: 24),
-              const Text(
-                "Description du Service",
-                style: TextStyle(fontWeight: FontWeight.bold, color: Color(0xFF0D1F3C), fontSize: 14),
-              ),
-              const SizedBox(height: 8),
-              const Text(
-                "Prestataire professionnel certifié disponible pour intervenir rapidement à Doha. Équipements de pointe, travail soigné et respect des délais garantis.",
-                style: TextStyle(color: Color(0xFF6B7A99), fontSize: 13, height: 1.5),
-              ),
-              const SizedBox(height: 24),
-              Row(
-                children: [
-                  Expanded(
-                    child: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFFFFFBEB),
-                      padding: const EdgeInsets.symmetric(vertical: 16),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(16),
-                        side: const BorderSide(color: Color(0xFFC9A84C)),
-                      ),
-                    ).child(
-                      GestureDetector(
-                        onTap: () {
-                          Navigator.pop(context);
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(
-                              content: Text("Appel de ${service["provider"]} simulé !"),
-                              backgroundColor: const Color(0xFF2D9B6F),
-                              behavior: SnackBarBehavior.floating,
-                            ),
-                          );
-                        },
-                        child: const Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Icon(Icons.phone, color: Color(0xFFC9A84C), size: 18),
-                            SizedBox(width: 8),
-                            Text("Appeler", style: TextStyle(color: Color(0xFFC9A84C), fontWeight: FontWeight.bold)),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
                     child: ElevatedButton(
                       onPressed: () {
                         Navigator.pop(context);
                         ScaffoldMessenger.of(context).showSnackBar(
                           SnackBar(
-                            content: Text("Message de contact envoyé à ${service["provider"]} !"),
+                            content: Text('Messagerie avec $nomUser (bientôt disponible)'),
                             backgroundColor: const Color(0xFF2D9B6F),
                             behavior: SnackBarBehavior.floating,
                           ),
                         );
                       },
                       style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFF0D1F3C),
+                        backgroundColor: Colors.transparent,
+                        shadowColor: Colors.transparent,
                         padding: const EdgeInsets.symmetric(vertical: 16),
                         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
                       ),
@@ -240,19 +231,22 @@ class _HomeScreenState extends State<HomeScreen> {
                         children: [
                           Icon(Icons.chat_bubble_outline, color: Colors.white, size: 18),
                           SizedBox(width: 8),
-                          Text("Contacter", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                          Text('Contacter', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
                         ],
                       ),
                     ),
                   ),
                 ],
               ),
-            ],
+            ),
           ),
         );
       },
     );
   }
+
+  // Ancien _showServiceDetails conservé pour compatibilité (non utilisé)
+  void _showServiceDetails(Map<String, dynamic> service) => _showAnnonceDetails(service);
 
   Widget _buildDetailMeta(IconData icon, String label, String value) {
     return Column(
@@ -288,6 +282,7 @@ class _HomeScreenState extends State<HomeScreen> {
           setState(() {
             _currentIndex = 0; // go back to home tab
           });
+          _loadFeed(reset: true);
         },
       );
     } else if (_currentIndex == 2) {
@@ -344,13 +339,14 @@ class _HomeScreenState extends State<HomeScreen> {
 
   /* ─── HOME FEED TAB VIEW ─────────────────────────────────── */
   Widget _buildHomeTab() {
-    // Filter services list
-    final filteredServices = _mockServices.where((s) {
-      final matchesCat = _selectedCategory == "tous" || s["category"] == _selectedCategory;
-      final matchesSearch = _searchQuery.isEmpty ||
-          s["title"].toString().toLowerCase().contains(_searchQuery.toLowerCase()) ||
-          s["provider"].toString().toLowerCase().contains(_searchQuery.toLowerCase());
-      return matchesCat && matchesSearch;
+    // Filtrage local par recherche textuelle sur les données déjà chargées
+    final filteredAnnonces = _annonces.where((a) {
+      if (_searchQuery.isEmpty) return true;
+      final titre = (a['titre'] ?? '').toString().toLowerCase();
+      final user = (a['nom_user'] ?? '').toString().toLowerCase();
+      final ville = (a['ville'] ?? '').toString().toLowerCase();
+      final q = _searchQuery.toLowerCase();
+      return titre.contains(q) || user.contains(q) || ville.contains(q);
     }).toList();
 
     return Column(
@@ -457,7 +453,27 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ),
 
-        // Horizonal Category pickers
+        if (_isLoggedIn)
+          Padding(
+            padding: const EdgeInsets.only(top: 14, left: 16, right: 16),
+            child: Container(
+              height: 40,
+              decoration: BoxDecoration(
+                color: const Color(0xFFE8EDF5).withOpacity(0.5),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              padding: const EdgeInsets.all(4),
+              child: Row(
+                children: [
+                  Expanded(child: _buildFilterTab("all", "Toutes")),
+                  Expanded(child: _buildFilterTab("mine", "Mes offres")),
+                  Expanded(child: _buildFilterTab("others", "Autres offres")),
+                ],
+              ),
+            ),
+          ),
+
+        // Filtres catégories horizontaux
         Padding(
           padding: const EdgeInsets.only(top: 16, bottom: 8),
           child: SizedBox(
@@ -473,165 +489,221 @@ class _HomeScreenState extends State<HomeScreen> {
                 _buildCategoryPill("cours", "Cours 📚"),
                 _buildCategoryPill("peinture", "Peinture 🎨"),
                 _buildCategoryPill("livraison", "Livraison 🚚"),
+                _buildCategoryPill("renovation", "Rénovation 🏗️"),
+                _buildCategoryPill("autre", "Autre 📦"),
               ],
             ),
           ),
         ),
 
-        // Services list
+        // Liste des annonces réelles
         Expanded(
-          child: filteredServices.isEmpty
-              ? Center(
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      const Icon(Icons.search_off, size: 48, color: Color(0xFFA0ABBE)),
-                      const SizedBox(height: 12),
-                      const Text(
-                        "Aucun service correspondant",
-                        style: TextStyle(color: Color(0xFF6B7A99), fontWeight: FontWeight.bold),
+          child: _feedLoading && _annonces.isEmpty
+              // Chargement initial
+              ? const Center(child: CircularProgressIndicator(color: Color(0xFF0D1F3C)))
+              : _feedError != null && _annonces.isEmpty
+                  // Erreur réseau
+                  ? Center(
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          const Icon(Icons.wifi_off, size: 48, color: Color(0xFFA0ABBE)),
+                          const SizedBox(height: 12),
+                          Text(_feedError!, style: const TextStyle(color: Color(0xFF6B7A99))),
+                          const SizedBox(height: 16),
+                          ElevatedButton(
+                            onPressed: () => _loadFeed(reset: true),
+                            style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF0D1F3C)),
+                            child: const Text('Réessayer', style: TextStyle(color: Colors.white)),
+                          ),
+                        ],
                       ),
-                    ],
-                  ),
-                )
-              : ListView.builder(
-                  padding: const EdgeInsets.only(left: 16, right: 16, top: 8, bottom: 24),
-                  itemCount: filteredServices.length,
-                  itemBuilder: (context, index) {
-                    final s = filteredServices[index];
-                    return Card(
-                      margin: const EdgeInsets.only(bottom: 14),
-                      color: Colors.white,
-                      surfaceTintColor: Colors.white,
-                      elevation: 1,
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-                      child: InkWell(
-                        onTap: () => _showServiceDetails(s),
-                        borderRadius: BorderRadius.circular(20),
-                        child: Padding(
-                          padding: const EdgeInsets.all(16.0),
+                    )
+                  : filteredAnnonces.isEmpty
+                      // Aucun résultat
+                      ? Center(
                           child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
+                            mainAxisAlignment: MainAxisAlignment.center,
                             children: [
-                              Row(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Container(
-                                    width: 48,
-                                    height: 48,
-                                    decoration: BoxDecoration(
-                                      color: const Color(0xFFF5F7FA),
-                                      borderRadius: BorderRadius.circular(14),
-                                    ),
-                                    alignment: Alignment.center,
-                                    child: Text(s["emoji"], style: const TextStyle(fontSize: 22)),
-                                  ),
-                                  const SizedBox(width: 14),
-                                  Expanded(
-                                    child: Column(
-                                      crossAxisAlignment: CrossAxisAlignment.start,
-                                      children: [
-                                        Row(
-                                          children: [
-                                            Expanded(
-                                              child: Text(
-                                                s["title"],
-                                                style: const TextStyle(
-                                                  fontSize: 15,
-                                                  fontWeight: FontWeight.bold,
-                                                  color: Color(0xFF0D1F3C),
-                                                ),
-                                                overflow: TextOverflow.ellipsis,
-                                              ),
-                                            ),
-                                            if (s["isUrgent"]) ...[
-                                              Container(
-                                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                                                decoration: BoxDecoration(
-                                                  color: const Color(0xFFFEE2E2),
-                                                  borderRadius: BorderRadius.circular(6),
-                                                ),
-                                                child: const Text(
-                                                  "URGENT",
-                                                  style: TextStyle(
-                                                    color: Color(0xFFEF4444),
-                                                    fontWeight: FontWeight.bold,
-                                                    fontSize: 8,
-                                                  ),
-                                                ),
-                                              ),
-                                            ],
-                                          ],
-                                        ),
-                                        const SizedBox(height: 4),
-                                        Text(
-                                          s["provider"],
-                                          style: const TextStyle(color: Color(0xFF6B7A99), fontSize: 12),
-                                        ),
-                                        const SizedBox(height: 6),
-                                        Row(
-                                          children: [
-                                            const Icon(Icons.star, color: Color(0xFFC9A84C), size: 14),
-                                            const SizedBox(width: 4),
-                                            Text(
-                                              "${s["rating"]} (${s["reviews"]} avis)",
-                                              style: const TextStyle(
-                                                color: Color(0xFF0D1F3C),
-                                                fontWeight: FontWeight.bold,
-                                                fontSize: 11,
-                                              ),
-                                            ),
-                                            const SizedBox(width: 12),
-                                            const Icon(Icons.location_on_outlined, color: Color(0xFFA0ABBE), size: 14),
-                                            const SizedBox(width: 4),
-                                            Expanded(
-                                              child: Text(
-                                                s["location"],
-                                                style: const TextStyle(
-                                                  color: Color(0xFF6B7A99),
-                                                  fontSize: 11,
-                                                ),
-                                                overflow: TextOverflow.ellipsis,
-                                              ),
-                                            ),
-                                          ],
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                ],
-                              ),
+                              const Icon(Icons.inbox_outlined, size: 56, color: Color(0xFFA0ABBE)),
                               const SizedBox(height: 12),
-                              Container(height: 1, color: const Color(0xFFF5F7FA)),
-                              const SizedBox(height: 8),
-                              Row(
-                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                                children: [
-                                  Text(
-                                    s["price"],
-                                    style: const TextStyle(
-                                      color: Color(0xFFC9A84C),
-                                      fontWeight: FontWeight.bold,
-                                      fontSize: 15,
-                                    ),
-                                  ),
-                                  const Text(
-                                    "Consulter →",
-                                    style: TextStyle(
-                                      color: Color(0xFF0D1F3C),
-                                      fontWeight: FontWeight.bold,
-                                      fontSize: 12,
-                                    ),
-                                  ),
-                                ],
+                              const Text('Aucune annonce disponible',
+                                  style: TextStyle(color: Color(0xFF6B7A99), fontWeight: FontWeight.bold)),
+                              const SizedBox(height: 6),
+                              const Text('Soyez le premier à publier !',
+                                  style: TextStyle(color: Color(0xFFA0ABBE), fontSize: 13)),
+                              const SizedBox(height: 16),
+                              ElevatedButton(
+                                onPressed: () => _loadFeed(reset: true),
+                                style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF0D1F3C)),
+                                child: const Text('Actualiser', style: TextStyle(color: Colors.white)),
                               ),
                             ],
                           ),
+                        )
+                      // Liste des annonces
+                      : RefreshIndicator(
+                          onRefresh: () => _loadFeed(reset: true),
+                          color: const Color(0xFF0D1F3C),
+                          child: ListView.builder(
+                            padding: const EdgeInsets.only(left: 16, right: 16, top: 8, bottom: 24),
+                            itemCount: filteredAnnonces.length + (_feedLoading ? 1 : 0),
+                            itemBuilder: (context, index) {
+                              // Indicateur de chargement en bas de liste
+                              if (index == filteredAnnonces.length) {
+                                return const Center(
+                                  child: Padding(
+                                    padding: EdgeInsets.all(16),
+                                    child: CircularProgressIndicator(color: Color(0xFF0D1F3C)),
+                                  ),
+                                );
+                              }
+
+                              final a = filteredAnnonces[index];
+                              final String titre = a['titre'] ?? '';
+                              final String nomUser = a['nom_user'] ?? 'Inconnu';
+                              final String? avatarUser = a['avatar_user'];
+                              final String prix = a['prix'] != null ? '${a['prix']} QAR' : 'Sur devis';
+                              final String ville = a['ville'] ?? '';
+                              final int nbLikes = a['nb_likes'] ?? 0;
+                              final int nbCommentaires = a['nb_commentaires'] ?? 0;
+                              final String? premierePhoto = a['premiere_photo'];
+                              final String emoji = _categoryEmoji(a['categorie']);
+
+                              return Card(
+                                margin: const EdgeInsets.only(bottom: 14),
+                                color: Colors.white,
+                                surfaceTintColor: Colors.white,
+                                elevation: 1,
+                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                                child: InkWell(
+                                  onTap: () => _showAnnonceDetails(a),
+                                  borderRadius: BorderRadius.circular(20),
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      // Photo principale si disponible
+                                      if (premierePhoto != null)
+                                        ClipRRect(
+                                          borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+                                          child: Image.network(
+                                            premierePhoto,
+                                            height: 160,
+                                            width: double.infinity,
+                                            fit: BoxFit.cover,
+                                            errorBuilder: (_, __, ___) => Container(
+                                              height: 80,
+                                              color: const Color(0xFFF5F7FA),
+                                              alignment: Alignment.center,
+                                              child: Text(emoji, style: const TextStyle(fontSize: 40)),
+                                            ),
+                                          ),
+                                        ),
+                                      Padding(
+                                        padding: const EdgeInsets.all(16),
+                                        child: Column(
+                                          crossAxisAlignment: CrossAxisAlignment.start,
+                                          children: [
+                                            Row(
+                                              crossAxisAlignment: CrossAxisAlignment.start,
+                                              children: [
+                                                // Emoji catégorie (si pas de photo)
+                                                if (premierePhoto == null)
+                                                  Container(
+                                                    width: 48,
+                                                    height: 48,
+                                                    decoration: BoxDecoration(
+                                                      color: const Color(0xFFF5F7FA),
+                                                      borderRadius: BorderRadius.circular(14),
+                                                    ),
+                                                    alignment: Alignment.center,
+                                                    child: Text(emoji, style: const TextStyle(fontSize: 24)),
+                                                  ),
+                                                if (premierePhoto == null) const SizedBox(width: 12),
+                                                Expanded(
+                                                  child: Column(
+                                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                                    children: [
+                                                      Text(titre,
+                                                        style: const TextStyle(
+                                                          fontSize: 15,
+                                                          fontWeight: FontWeight.bold,
+                                                          color: Color(0xFF0D1F3C),
+                                                        ),
+                                                        overflow: TextOverflow.ellipsis,
+                                                      ),
+                                                      const SizedBox(height: 4),
+                                                      Row(
+                                                        children: [
+                                                          // Avatar utilisateur
+                                                          CircleAvatar(
+                                                            radius: 10,
+                                                            backgroundColor: const Color(0xFFE8EDF5),
+                                                            backgroundImage: avatarUser != null
+                                                                ? NetworkImage(avatarUser)
+                                                                : null,
+                                                            child: avatarUser == null
+                                                                ? const Icon(Icons.person, size: 12, color: Color(0xFF6B7A99))
+                                                                : null,
+                                                          ),
+                                                          const SizedBox(width: 6),
+                                                          Text(nomUser,
+                                                            style: const TextStyle(color: Color(0xFF6B7A99), fontSize: 12),
+                                                          ),
+                                                          if (ville.isNotEmpty) ...[
+                                                            const SizedBox(width: 8),
+                                                            const Icon(Icons.location_on_outlined, color: Color(0xFFA0ABBE), size: 12),
+                                                            const SizedBox(width: 2),
+                                                            Expanded(
+                                                              child: Text(ville,
+                                                                style: const TextStyle(color: Color(0xFFA0ABBE), fontSize: 11),
+                                                                overflow: TextOverflow.ellipsis,
+                                                              ),
+                                                            ),
+                                                          ],
+                                                        ],
+                                                      ),
+                                                    ],
+                                                  ),
+                                                ),
+                                              ],
+                                            ),
+                                            const SizedBox(height: 12),
+                                            Container(height: 1, color: const Color(0xFFF5F7FA)),
+                                            const SizedBox(height: 8),
+                                            Row(
+                                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                              children: [
+                                                Text(prix,
+                                                  style: const TextStyle(
+                                                    color: Color(0xFFC9A84C),
+                                                    fontWeight: FontWeight.bold,
+                                                    fontSize: 15,
+                                                  ),
+                                                ),
+                                                Row(
+                                                  children: [
+                                                    const Icon(Icons.favorite_border, size: 14, color: Color(0xFFA0ABBE)),
+                                                    const SizedBox(width: 4),
+                                                    Text('$nbLikes', style: const TextStyle(color: Color(0xFF6B7A99), fontSize: 12)),
+                                                    const SizedBox(width: 12),
+                                                    const Icon(Icons.chat_bubble_outline, size: 14, color: Color(0xFFA0ABBE)),
+                                                    const SizedBox(width: 4),
+                                                    Text('$nbCommentaires', style: const TextStyle(color: Color(0xFF6B7A99), fontSize: 12)),
+                                                  ],
+                                                ),
+                                              ],
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              );
+                            },
+                          ),
                         ),
-                      ),
-                    );
-                  },
-                ),
         ),
       ],
     );
@@ -644,11 +716,7 @@ class _HomeScreenState extends State<HomeScreen> {
       child: ChoiceChip(
         label: Text(label),
         selected: isSelected,
-        onSelected: (val) {
-          setState(() {
-            _selectedCategory = id;
-          });
-        },
+        onSelected: (val) => _onCategoryChanged(id),
         selectedColor: const Color(0xFFFFFBEB),
         backgroundColor: Colors.white,
         disabledColor: Colors.white,
@@ -665,6 +733,44 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ),
         showCheckmark: false,
+      ),
+    );
+  }
+
+  Widget _buildFilterTab(String id, String label) {
+    final isSelected = _selectedFilter == id;
+    return GestureDetector(
+      onTap: () {
+        if (_selectedFilter != id) {
+          setState(() {
+            _selectedFilter = id;
+          });
+          _loadFeed(reset: true);
+        }
+      },
+      child: Container(
+        decoration: BoxDecoration(
+          color: isSelected ? Colors.white : Colors.transparent,
+          borderRadius: BorderRadius.circular(9),
+          boxShadow: isSelected
+              ? [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.05),
+                    blurRadius: 4,
+                    offset: const Offset(0, 2),
+                  )
+                ]
+              : null,
+        ),
+        alignment: Alignment.center,
+        child: Text(
+          label,
+          style: TextStyle(
+            color: isSelected ? const Color(0xFF0D1F3C) : const Color(0xFF6B7A99),
+            fontWeight: isSelected ? FontWeight.bold : FontWeight.w500,
+            fontSize: 12,
+          ),
+        ),
       ),
     );
   }

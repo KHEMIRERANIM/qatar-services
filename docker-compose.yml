@@ -1,5 +1,4 @@
 version: '3.8'
-
 services:
   backend:
     build: ./backend
@@ -13,12 +12,19 @@ services:
       - JWT_SECRET=qatar_services_secret_key
       - JWT_EXPIRE=24h
       - JWT_REFRESH_EXPIRE=7d
+      - CLOUDINARY_CLOUD_NAME=ddeyhgbvr
+      - CLOUDINARY_API_KEY=888797846191552
+      - CLOUDINARY_API_SECRET=2JrWAP0cjLVziJaiffwYyPfvNj8
+      - VERIFF_API_KEY=f66f4eb1-b070-4953-86dd-4120aa6d75f8
+      - VERIFF_API_SECRET=ac707b27-2ed6-4dbf-86af-883fb7dbf6e1
+      - VERIFF_BASE_URL=https://stationapi.veriff.com
+      - ADMIN_SECRET=qatar_admin_secret
+      - BACKEND_URL=https://fancy-cities-show.loca.lt
     depends_on:
       - mysql
     volumes:
       - ./backend:/app
       - /app/node_modules
-
   mysql:
     image: mariadb:10.4
     ports:
@@ -28,7 +34,6 @@ services:
       - MYSQL_DATABASE=qatar_services
     volumes:
       - mysql_data:/var/lib/mysql
-
   phpmyadmin:
     image: phpmyadmin/phpmyadmin
     ports:
@@ -37,6 +42,5 @@ services:
       - PMA_HOST=mysql
       - PMA_USER=root
       - PMA_PASSWORD=root
-
 volumes:
   mysql_data:

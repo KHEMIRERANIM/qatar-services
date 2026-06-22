@@ -1,4 +1,7 @@
 import 'package:flutter/material.dart';
+import 'dart:io';
+import 'package:image_picker/image_picker.dart';
+import '../services/annonce_service.dart';
 
 class CreateListingScreen extends StatefulWidget {
   final VoidCallback onBack;
@@ -57,9 +60,11 @@ class _CreateListingScreenState extends State<CreateListingScreen> {
 
   bool _showCatPicker = false;
   bool _submitted = false;
+  bool _isLoading = false;
+  String? _errorMessage;
 
-  // List of uploaded mock photos
-  final List<Map<String, dynamic>> _photos = [];
+  // List of picked real photos
+  final List<File> _photos = [];
 
   @override
   void dispose() {
@@ -70,7 +75,7 @@ class _CreateListingScreenState extends State<CreateListingScreen> {
     super.dispose();
   }
 
-  void _handleSubmit() {
+  Future<void> _handleSubmit() async {
     if (_titleController.text.trim().isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -103,13 +108,111 @@ class _CreateListingScreenState extends State<CreateListingScreen> {
     }
 
     setState(() {
-      _submitted = true;
+      _isLoading = true;
+      _errorMessage = null;
     });
-    Future.delayed(const Duration(milliseconds: 1600), () {
-      if (mounted) {
-        widget.onSuccess();
+
+    double? prix;
+    if (_selectedPricingType != 'quote' && _priceController.text.isNotEmpty) {
+      prix = double.tryParse(_priceController.text);
+    }
+
+    final result = await AnnonceService.createAnnonce(
+      titre: _titleController.text.trim(),
+      description: _descriptionController.text.trim(),
+      categorie: _selectedCategory,
+      prix: prix,
+      ville: _locationController.text.trim().isEmpty ? null : _locationController.text.trim(),
+    );
+
+    if (!mounted) return;
+
+    if (result.success) {
+      final dynamic resData = result.data;
+      if (resData != null && resData is Map<String, dynamic> && resData['id'] != null) {
+        final int id = resData['id'];
+        for (final photoFile in _photos) {
+          try {
+            await AnnonceService.uploadPhoto(id, photoFile);
+          } catch (e) {
+            debugPrint("Error uploading photo: $e");
+          }
+        }
       }
-    });
+
+      setState(() {
+        _isLoading = false;
+        _submitted = true;
+      });
+      Future.delayed(const Duration(milliseconds: 1600), () {
+        if (mounted) widget.onSuccess();
+      });
+    } else {
+      setState(() {
+        _isLoading = false;
+        _errorMessage = result.message ?? 'Une erreur est survenue.';
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(_errorMessage!),
+          backgroundColor: const Color(0xFFEF4444),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    }
+  }
+
+  void _addPhoto() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (context) {
+        return Container(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text(
+                "Ajouter une photo",
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Color(0xFF0D1F3C)),
+              ),
+              const SizedBox(height: 20),
+              ListTile(
+                leading: const Icon(Icons.photo_library, color: Color(0xFFC9A84C)),
+                title: const Text("Choisir depuis la galerie"),
+                onTap: () async {
+                  Navigator.pop(context);
+                  final picker = ImagePicker();
+                  final pickedFile = await picker.pickImage(source: ImageSource.gallery, imageQuality: 85);
+                  if (pickedFile != null) {
+                    setState(() {
+                      _photos.add(File(pickedFile.path));
+                    });
+                  }
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.camera_alt, color: Color(0xFF0D1F3C)),
+                title: const Text("Prendre une photo"),
+                onTap: () async {
+                  Navigator.pop(context);
+                  final picker = ImagePicker();
+                  final pickedFile = await picker.pickImage(source: ImageSource.camera, imageQuality: 85);
+                  if (pickedFile != null) {
+                    setState(() {
+                      _photos.add(File(pickedFile.path));
+                    });
+                  }
+                },
+              ),
+            ],
+          ),
+        );
+      },
+    );
   }
 
   @override
@@ -248,17 +351,7 @@ class _CreateListingScreenState extends State<CreateListingScreen> {
                         // Ajouter photo button (displays if user has selected less than 3 photos)
                         if (_photos.length < 3)
                           InkWell(
-                            onTap: () {
-                              setState(() {
-                                final emojis = ['🛠️', '🔌', '🧹', '🚚', '📦'];
-                                final selectedEmoji = emojis[_photos.length % emojis.length];
-                                _photos.add({
-                                  'id': DateTime.now().toString(),
-                                  'emoji': selectedEmoji,
-                                  'label': 'Photo ${_photos.length + 1}'
-                                });
-                              });
-                            },
+                            onTap: _addPhoto,
                             borderRadius: BorderRadius.circular(16),
                             child: Container(
                               width: 80,
@@ -296,36 +389,13 @@ class _CreateListingScreenState extends State<CreateListingScreen> {
                             child: Stack(
                               clipBehavior: Clip.none,
                               children: [
-                                Container(
-                                  width: 80,
-                                  height: 80,
-                                  decoration: BoxDecoration(
-                                    color: Colors.white,
-                                    borderRadius: BorderRadius.circular(16),
-                                    border: Border.all(color: const Color(0xFF0D1F3C).withOpacity(0.1)),
-                                    boxShadow: [
-                                      BoxShadow(
-                                        color: Colors.black.withOpacity(0.04),
-                                        blurRadius: 4,
-                                        offset: const Offset(0, 2),
-                                      ),
-                                    ],
-                                  ),
-                                  alignment: Alignment.center,
-                                  child: Column(
-                                    mainAxisAlignment: MainAxisAlignment.center,
-                                    children: [
-                                      Text(photo['emoji'], style: const TextStyle(fontSize: 24)),
-                                      const SizedBox(height: 4),
-                                      Text(
-                                        photo['label'],
-                                        style: const TextStyle(
-                                          fontSize: 10,
-                                          color: Color(0xFF6B7A99),
-                                          fontWeight: FontWeight.bold,
-                                        ),
-                                      ),
-                                    ],
+                                ClipRRect(
+                                  borderRadius: BorderRadius.circular(16),
+                                  child: Image.file(
+                                    photo,
+                                    width: 80,
+                                    height: 80,
+                                    fit: BoxFit.cover,
                                   ),
                                 ),
                                 Positioned(
@@ -334,7 +404,7 @@ class _CreateListingScreenState extends State<CreateListingScreen> {
                                   child: GestureDetector(
                                     onTap: () {
                                       setState(() {
-                                        _photos.removeWhere((item) => item['id'] == photo['id']);
+                                        _photos.remove(photo);
                                       });
                                     },
                                     child: Container(
@@ -780,7 +850,7 @@ class _CreateListingScreenState extends State<CreateListingScreen> {
                         ],
                       ),
                       child: ElevatedButton(
-                        onPressed: _handleSubmit,
+                        onPressed: _isLoading ? null : _handleSubmit,
                         style: ElevatedButton.styleFrom(
                           backgroundColor: Colors.transparent,
                           shadowColor: Colors.transparent,
@@ -789,14 +859,23 @@ class _CreateListingScreenState extends State<CreateListingScreen> {
                             borderRadius: BorderRadius.circular(16),
                           ),
                         ),
-                        child: const Text(
-                          "Publier l'annonce",
-                          style: TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.bold,
-                            color: Colors.white,
-                          ),
-                        ),
+                        child: _isLoading
+                            ? const SizedBox(
+                                height: 20,
+                                width: 20,
+                                child: CircularProgressIndicator(
+                                  color: Colors.white,
+                                  strokeWidth: 2,
+                                ),
+                              )
+                            : const Text(
+                                "Publier l'annonce",
+                                style: TextStyle(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.bold,
+                                  color: Colors.white,
+                                ),
+                              ),
                       ),
                     ),
                   ],

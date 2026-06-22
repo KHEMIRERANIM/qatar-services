@@ -2,6 +2,7 @@ const db = require('../config/database')
 const bcrypt = require('bcrypt')
 const jwt = require('jsonwebtoken')
 const { v4: uuidv4 } = require('uuid')
+const cloudinary = require('../config/cloudinary')
 
 // ═══════════════════════════
 // CREATE — INSCRIPTION
@@ -650,3 +651,50 @@ exports.loginPhone = async (req, res) => {
     res.status(500).json({ message: error.message })
   }
 }
+
+// Helper pour uploader un buffer de fichier vers Cloudinary dans le dossier 'profiles'
+const uploadFromBuffer = (fileBuffer) => {
+  return new Promise((resolve, reject) => {
+    const stream = cloudinary.uploader.upload_stream(
+      { folder: 'profiles' },
+      (error, result) => {
+        if (result) resolve(result);
+        else reject(error);
+      }
+    );
+    stream.end(fileBuffer);
+  });
+};
+
+// POST /auth/profile/photo - Mettre à jour la photo de profil du user connecté
+exports.updateProfilePhoto = async (req, res) => {
+  try {
+    if (!req.files || Object.keys(req.files).length === 0) {
+      return res.status(400).json({ success: false, message: 'Aucun fichier n\'a été fourni.' });
+    }
+
+    const file = req.files.photo || req.files.image || Object.values(req.files)[0];
+    let uploadResult;
+    if (file.tempFilePath) {
+      uploadResult = await cloudinary.uploader.upload(file.tempFilePath, { folder: 'profiles' });
+    } else if (file.data) {
+      uploadResult = await uploadFromBuffer(file.data);
+    } else {
+      return res.status(400).json({ success: false, message: 'Données de fichier invalides.' });
+    }
+
+    const photoUrl = uploadResult.secure_url;
+
+    // Mise à jour de l'utilisateur connecté dans MySQL
+    await db.query('UPDATE users SET photo = ? WHERE id = ?', [photoUrl, req.user.id]);
+
+    res.json({
+      success: true,
+      message: 'Photo de profil mise à jour avec succès',
+      photo: photoUrl
+    });
+
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};

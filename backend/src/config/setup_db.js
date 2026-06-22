@@ -103,6 +103,7 @@ async function run() {
     const docAlterations = [
       { name: 'onfido_check_id', sql: 'ALTER TABLE documents ADD COLUMN onfido_check_id VARCHAR(255) NULL' },
       { name: 'qr_code_valide', sql: 'ALTER TABLE documents ADD COLUMN qr_code_valide BOOLEAN DEFAULT FALSE' },
+      { name: 'qid_verifie', sql: 'ALTER TABLE documents ADD COLUMN qid_verifie BOOLEAN DEFAULT FALSE' },
       { name: 'date_expiration', sql: 'ALTER TABLE documents ADD COLUMN date_expiration DATE NULL' },
       { name: 'raison_refus', sql: 'ALTER TABLE documents ADD COLUMN raison_refus TEXT NULL' },
       { name: 'verifie_le', sql: 'ALTER TABLE documents ADD COLUMN verifie_le DATETIME NULL' }
@@ -124,6 +125,7 @@ async function run() {
       { name: 'statut_verification', sql: "ALTER TABLE prestataires ADD COLUMN statut_verification ENUM('en_attente','valide','refuse','en_attente_admin') DEFAULT 'en_attente'" },
       { name: 'badge_verifie', sql: 'ALTER TABLE prestataires ADD COLUMN badge_verifie BOOLEAN DEFAULT FALSE' },
       { name: 'raison_refus', sql: 'ALTER TABLE prestataires ADD COLUMN raison_refus TEXT NULL' },
+      { name: 'documents_invalides', sql: 'ALTER TABLE prestataires ADD COLUMN documents_invalides TEXT NULL' },
       { name: 'verifie_le', sql: 'ALTER TABLE prestataires ADD COLUMN verifie_le DATETIME NULL' }
     ];
 

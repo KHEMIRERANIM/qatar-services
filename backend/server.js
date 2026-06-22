@@ -22,10 +22,12 @@ app.get('/', (req, res) => {
 const authRoutes = require('./src/routes/authRoutes');
 const proRoutes = require('./src/routes/proRoutes');
 const proController = require('./src/controllers/proController');
+const annoncesRoutes = require('./src/routes/annonces');
 
 // Utilisation des routes
 app.use('/auth', authRoutes);
 app.use('/pro', proRoutes);
+app.use('/api/annonces', annoncesRoutes);
 app.post('/veriff-callback', proController.veriffCallback);
 
 // Initialisation de la base de données et tâche de nettoyage

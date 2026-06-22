@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'package:http/http.dart' as http;
 import 'token_service.dart';
 
@@ -188,6 +189,35 @@ static const String baseUrl = 'http://192.168.1.16:3000';
           message: data['message'] ?? 'Erreur de mise à jour');
     } catch (e) {
       return AuthResult(success: false, message: 'Erreur réseau');
+    }
+  }
+
+  // POST /auth/profile/photo
+  static Future<AuthResult> uploadProfilePhoto(File imageFile) async {
+    final token = await TokenService.getToken();
+    if (token == null) {
+      return AuthResult(success: false, message: 'Non authentifié', tokenExpired: true);
+    }
+    try {
+      final request = http.MultipartRequest(
+        'POST',
+        Uri.parse('$baseUrl/auth/profile/photo'),
+      );
+      request.headers['Authorization'] = 'Bearer $token';
+      request.files.add(await http.MultipartFile.fromPath('photo', imageFile.path));
+
+      final streamedResponse = await request.send().timeout(_timeout);
+      final response = await http.Response.fromStream(streamedResponse);
+      final data = jsonDecode(response.body) as Map<String, dynamic>;
+
+      if (response.statusCode == 200) {
+        return AuthResult(success: true, data: data);
+      }
+      return AuthResult(success: false, message: data['message'] ?? 'Erreur upload photo');
+    } on TimeoutException {
+      return AuthResult(success: false, message: 'Délai dépassé lors de l\'upload.');
+    } catch (e) {
+      return AuthResult(success: false, message: 'Erreur lors de l\'upload.');
     }
   }
 

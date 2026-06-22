@@ -16,6 +16,7 @@ router.post('/login-phone', authController.loginPhone)
 // Routes protégées
 router.get('/profile', authMiddleware, authController.profile)
 router.put('/profile/update', authMiddleware, authController.updateProfile)
+router.post('/profile/photo', authMiddleware, authController.updateProfilePhoto)
 router.post('/verify-email', authMiddleware, authController.verifyEmail)
 router.post('/logout', authMiddleware, authController.logout)
 

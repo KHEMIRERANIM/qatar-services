@@ -5,9 +5,10 @@ import 'dart:async';
 import 'package:image_picker/image_picker.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:url_launcher/url_launcher.dart';
-import 'package:mobile_scanner/mobile_scanner.dart';
 import '../services/auth_service.dart';
 import '../services/pro_service.dart';
+import 'veriff_verification_screen.dart';
+import 'native_identity_verification_screen.dart';
 
 class ProfileScreen extends StatefulWidget {
   final VoidCallback onLogout;
@@ -237,7 +238,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
-  // Simulate changing photo
+  // Changer la photo de profil - vraie sélection depuis galerie ou caméra
   void _changeProfilePhoto() {
     showModalBottomSheet(
       context: context,
@@ -259,36 +260,17 @@ class _ProfileScreenState extends State<ProfileScreen> {
               ListTile(
                 leading: const Icon(Icons.photo_library, color: Color(0xFFC9A84C)),
                 title: const Text("Choisir depuis la galerie"),
-                onTap: () {
-                  setState(() {
-                    // Switch to a different mock portrait image
-                    _imageUrl = "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=200&h=200&fit=crop&auto=format";
-                  });
+                onTap: () async {
                   Navigator.pop(context);
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text("Nouvelle photo de profil sélectionnée !"),
-                      backgroundColor: Color(0xFF2D9B6F),
-                      behavior: SnackBarBehavior.floating,
-                    ),
-                  );
+                  await _pickAndUploadPhoto(ImageSource.gallery);
                 },
               ),
               ListTile(
                 leading: const Icon(Icons.camera_alt, color: Color(0xFF0D1F3C)),
                 title: const Text("Prendre une photo"),
-                onTap: () {
-                  setState(() {
-                    _imageUrl = "https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=200&h=200&fit=crop&auto=format";
-                  });
+                onTap: () async {
                   Navigator.pop(context);
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text("Photo capturée avec succès !"),
-                      backgroundColor: Color(0xFF2D9B6F),
-                      behavior: SnackBarBehavior.floating,
-                    ),
-                  );
+                  await _pickAndUploadPhoto(ImageSource.camera);
                 },
               ),
             ],
@@ -296,6 +278,46 @@ class _ProfileScreenState extends State<ProfileScreen> {
         );
       },
     );
+  }
+
+  Future<void> _pickAndUploadPhoto(ImageSource source) async {
+    final picker = ImagePicker();
+    final pickedFile = await picker.pickImage(source: source, imageQuality: 85);
+    if (pickedFile == null || !mounted) return;
+
+    final imageFile = File(pickedFile.path);
+
+    // Show local preview immediately
+    setState(() {
+      _imageUrl = pickedFile.path;
+    });
+
+    final result = await AuthService.uploadProfilePhoto(imageFile);
+    if (!mounted) return;
+
+    if (result.success && result.data != null) {
+      final photoUrl = result.data!['photo'] ?? result.data!['url'];
+      if (photoUrl != null) {
+        setState(() {
+          _imageUrl = photoUrl;
+        });
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text("Photo de profil mise à jour avec succès !"),
+          backgroundColor: Color(0xFF2D9B6F),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(result.message ?? "Erreur lors de l'upload."),
+          backgroundColor: const Color(0xFFEF4444),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    }
   }
 
   // Navigate to Upgrade Pro Screen
@@ -430,10 +452,21 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                 height: 80,
                                 decoration: BoxDecoration(
                                   borderRadius: BorderRadius.circular(20),
-                                  image: DecorationImage(
-                                    image: NetworkImage(_imageUrl),
-                                    fit: BoxFit.cover,
-                                  ),
+                                  color: const Color(0xFFE8EDF5),
+                                ),
+                                child: ClipRRect(
+                                  borderRadius: BorderRadius.circular(20),
+                                  child: _imageUrl.startsWith('http')
+                                      ? Image.network(
+                                          _imageUrl,
+                                          fit: BoxFit.cover,
+                                          errorBuilder: (_, __, ___) => const Icon(Icons.person, size: 40, color: Color(0xFF6B7A99)),
+                                        )
+                                      : Image.file(
+                                          File(_imageUrl),
+                                          fit: BoxFit.cover,
+                                          errorBuilder: (_, __, ___) => const Icon(Icons.person, size: 40, color: Color(0xFF6B7A99)),
+                                        ),
                                 ),
                               ),
                               Positioned(
@@ -1158,14 +1191,17 @@ class _UpgradeProScreenState extends State<UpgradeProScreen> {
   String? _qidFrontPath;
   String? _qidBackPath;
   String? _diplomaPath;
-  String? _licensePath;
-  String? _scannedQrCode;
 
   // Status state
   bool _isLoadingStatus = true;
   bool _isSubmitting = false;
-  String _verificationStatus = 'non_demande'; // non_demande, en_attente, en_attente_admin, refuse, valide
+  String _verificationStatus = 'non_demande';
   String? _raisonRefus;
+  String? _statusMessage;
+  List<String> _documentsInvalides = [];
+  String? _resubmitHint;
+  Map<String, dynamic> _documentsStatus = {};
+  bool _correctionMode = false;
   
   Timer? _statusTimer;
 
@@ -1193,6 +1229,16 @@ class _UpgradeProScreenState extends State<UpgradeProScreen> {
       _isLoadingStatus = false;
       _verificationStatus = res['statut_verification'] ?? 'non_demande';
       _raisonRefus = res['raison_refus'];
+      _statusMessage = res['message'];
+      _documentsInvalides = (res['documents_invalides'] as List<dynamic>?)
+              ?.map((e) => e.toString())
+              .toList() ??
+          [];
+      _resubmitHint = res['resubmit_hint'];
+      _documentsStatus = res['documents_status'] is Map
+          ? Map<String, dynamic>.from(res['documents_status'] as Map)
+          : {};
+      if (_verificationStatus == 'valide') _correctionMode = false;
     });
 
     if (_verificationStatus == 'valide') {
@@ -1214,10 +1260,25 @@ class _UpgradeProScreenState extends State<UpgradeProScreen> {
       }
       
       final currentStatus = res['statut_verification'] ?? 'non_demande';
-      if (currentStatus != _verificationStatus) {
+      final docsStatus = res['documents_status'] is Map
+          ? Map<String, dynamic>.from(res['documents_status'] as Map)
+          : <String, dynamic>{};
+
+      final statusChanged = currentStatus != _verificationStatus;
+      final docsChanged = docsStatus.toString() != _documentsStatus.toString();
+
+      if (statusChanged || docsChanged) {
         setState(() {
           _verificationStatus = currentStatus;
           _raisonRefus = res['raison_refus'];
+          _statusMessage = res['message'];
+          _documentsInvalides = (res['documents_invalides'] as List<dynamic>?)
+                  ?.map((e) => e.toString())
+                  .toList() ??
+              [];
+          _resubmitHint = res['resubmit_hint'];
+          _documentsStatus = docsStatus;
+          if (currentStatus == 'refuse') _correctionMode = false;
         });
 
         if (currentStatus == 'valide') {
@@ -1338,149 +1399,147 @@ class _UpgradeProScreenState extends State<UpgradeProScreen> {
     setState(() {
       if (docType == "qid_front") _qidFrontPath = filePath;
       if (docType == "qid_back") _qidBackPath = filePath;
-      if (docType == "diploma") {
-        _diplomaPath = filePath;
-      }
-      if (docType == "license") _licensePath = filePath;
+      if (docType == "diploma") _diplomaPath = filePath;
     });
-
-    if (docType == "diploma") {
-      _promptQrScan();
-    }
-  }
-
-  void _promptQrScan() {
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) {
-        return AlertDialog(
-          backgroundColor: Colors.white,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-          title: const Text("Scan du QR Code", style: TextStyle(color: Color(0xFF0D1F3C), fontWeight: FontWeight.bold)),
-          content: const Text(
-            "Souhaitez-vous scanner le QR code de sécurité présent sur votre diplôme pour une vérification automatique instantanée ?",
-            style: TextStyle(color: Color(0xFF6B7A99)),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () {
-                Navigator.pop(context);
-              },
-              child: const Text("Plus tard", style: TextStyle(color: Color(0xFF6B7A99))),
-            ),
-            ElevatedButton(
-              onPressed: () async {
-                Navigator.pop(context);
-                final code = await Navigator.push(
-                  this.context,
-                  MaterialPageRoute(builder: (context) => const QrScannerScreen()),
-                );
-                if (code != null) {
-                  setState(() {
-                    _scannedQrCode = code.toString();
-                  });
-                  _showSuccess("QR Code scanné avec succès !");
-                }
-              },
-              style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFFC9A84C),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-              ),
-              child: const Text("Scanner maintenant", style: TextStyle(color: Colors.white)),
-            ),
-          ],
-        );
-      },
-    );
   }
 
   void _removeFile(String docType) {
     setState(() {
       if (docType == "qid_front") _qidFrontPath = null;
       if (docType == "qid_back") _qidBackPath = null;
-      if (docType == "diploma") {
-        _diplomaPath = null;
-        _scannedQrCode = null;
-      }
-      if (docType == "license") _licensePath = null;
+      if (docType == "diploma") _diplomaPath = null;
     });
   }
 
-  Future<void> _submitDossier() async {
+  bool get _isPartialResubmit =>
+      _verificationStatus == 'refuse' && _documentsInvalides.isNotEmpty;
+
+  String _docStatut(String key) {
+    final doc = _documentsStatus[key];
+    if (doc is Map) return doc['statut']?.toString() ?? 'en_cours';
+    return 'en_cours';
+  }
+
+  String _docStatutLabel(String key) {
+    final doc = _documentsStatus[key];
+    if (doc is Map) return doc['label']?.toString() ?? '';
+    return '';
+  }
+
+  bool _canReplaceDoc(String key) {
+    final doc = _documentsStatus[key];
+    if (doc is Map) return doc['can_replace'] == true;
+    return false;
+  }
+
+  bool get _needsQid {
+    if (_verificationStatus == 'non_demande') return true;
+    if (_isPartialResubmit) return _documentsInvalides.contains('qid');
+    if (_correctionMode) return _canReplaceDoc('qid');
+    return true;
+  }
+
+  bool get _needsAttestation {
+    if (_verificationStatus == 'non_demande') return true;
+    if (_isPartialResubmit) return _documentsInvalides.contains('attestation');
+    if (_correctionMode) return _canReplaceDoc('attestation');
+    return true;
+  }
+
+  String _docLabel(String key) {
+    switch (key) {
+      case 'qid':
+        return "Carte d'identité Qatar (QID)";
+      case 'attestation':
+        return 'Attestation professionnelle';
+      default:
+        return key;
+    }
+  }
+
+Future<void> _submitDossier() async {
     final qidNum = _qidController.text.trim();
-    if (qidNum.isEmpty) {
-      _showError("Veuillez saisir votre numéro QID.");
-      return;
+
+    if (_needsQid) {
+      if (qidNum.isEmpty) {
+        _showError("Veuillez saisir votre numéro QID.");
+        return;
+      }
+      if (_qidFrontPath == null || _qidBackPath == null) {
+        _showError("Veuillez charger le QID Recto et Verso.");
+        return;
+      }
     }
-    if (_qidFrontPath == null || _qidBackPath == null) {
-      _showError("Veuillez charger le QID Recto et Verso.");
-      return;
-    }
-    if (_diplomaPath == null) {
-      _showError("Veuillez charger votre attestation/diplôme.");
+
+    if (_needsAttestation && _diplomaPath == null) {
+      _showError("Veuillez charger votre attestation professionnelle.");
       return;
     }
 
-    setState(() {
-      _isSubmitting = true;
-    });
+    setState(() => _isSubmitting = true);
 
     try {
-      // 1. Upload files
       final uploadRes = await ProService.uploadDocuments(
-        qidNum: qidNum,
-        qidRectoPath: _qidFrontPath!,
-        qidVersoPath: _qidBackPath!,
-        attestationPath: _diplomaPath!,
-        licencePath: _licensePath,
+        qidNum: _needsQid ? qidNum : null,
+        qidRectoPath: _needsQid ? _qidFrontPath : null,
+        qidVersoPath: _needsQid ? _qidBackPath : null,
+        attestationPath: _needsAttestation ? _diplomaPath : null,
       );
 
       if (!uploadRes['success']) {
         setState(() => _isSubmitting = false);
-        _showError(uploadRes['message'] ?? 'Erreur lors du téléchargement des documents.');
+        _showError(uploadRes['message'] ?? 'Une erreur est survenue. Veuillez réessayer plus tard.');
         return;
       }
 
-      // 2. Trigger verification
       final verifyRes = await ProService.verify();
       setState(() => _isSubmitting = false);
 
       if (!verifyRes['success']) {
-        _showError(verifyRes['message'] ?? 'Erreur lors de l\'initialisation de la vérification.');
+        _showError(verifyRes['message'] ?? 'Une erreur est survenue. Veuillez réessayer plus tard.');
+        await _checkStatus();
         return;
       }
 
-      final verificationUrl = verifyRes['verificationUrl'];
-      if (verificationUrl != null && verificationUrl.isNotEmpty) {
-        final uri = Uri.parse(verificationUrl);
-        if (await canLaunchUrl(uri)) {
-          await launchUrl(uri, mode: LaunchMode.externalApplication);
-        } else {
-          _showError("Impossible d'ouvrir le lien de vérification.");
-        }
+      if (verifyRes['status'] == 'valide') {
+        await _checkStatus();
+        return;
       }
 
-      // Refresh status page to show pending screen
-      _checkStatus();
+      final skipVeriff = verifyRes['skipVeriff'] == true;
+      final useNative = verifyRes['useNativeVerification'] == true;
+      final sessionId = verifyRes['sessionId'] as String?;
+      final verificationUrl = verifyRes['verificationUrl'] as String?;
 
+      if (!skipVeriff && useNative && sessionId != null) {
+        await Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (context) => NativeIdentityVerificationScreen(
+              sessionId: sessionId,
+            ),
+          ),
+        );
+      } else if (!skipVeriff &&
+          verificationUrl != null &&
+          verificationUrl.isNotEmpty) {
+        await Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (context) => VeriffVerificationScreen(
+              verificationUrl: verificationUrl,
+            ),
+          ),
+        );
+      }
+
+      await _checkStatus();
+      if (mounted) setState(() => _correctionMode = false);
     } catch (e) {
+      debugPrint('UpgradeProScreen._submitDossier exception: $e');
       setState(() => _isSubmitting = false);
-      _showError("Erreur inattendue : ${e.toString()}");
+      _showError('Une erreur est survenue. Veuillez réessayer plus tard.');
     }
-  }
-
-  Future<void> _resetToForm() async {
-    setState(() {
-      _qidFrontPath = null;
-      _qidBackPath = null;
-      _diplomaPath = null;
-      _licensePath = null;
-      _scannedQrCode = null;
-      _qidController.clear();
-      _verificationStatus = 'non_demande';
-      _raisonRefus = null;
-    });
   }
 
   @override
@@ -1510,16 +1569,16 @@ class _UpgradeProScreenState extends State<UpgradeProScreen> {
             children: [
               const CircularProgressIndicator(valueColor: AlwaysStoppedAnimation<Color>(Color(0xFFC9A84C))),
               const SizedBox(height: 24),
-              const Text(
-                "Soumission de votre dossier...",
-                style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Color(0xFF0D1F3C)),
+              Text(
+                _isPartialResubmit
+                    ? "Téléversement des documents corrigés..."
+                    : "Soumission de votre dossier...",
+                style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Color(0xFF0D1F3C)),
               ),
               const SizedBox(height: 8),
-              Text(
-                _scannedQrCode != null 
-                    ? "Cryptage et téléversement sécurisé (+ QR Code enregistré)"
-                    : "Cryptage et téléversement sécurisé des documents",
-                style: const TextStyle(color: Color(0xFF6B7A99), fontSize: 12),
+              const Text(
+                "Vos documents sont en cours de vérification",
+                style: TextStyle(color: Color(0xFF6B7A99), fontSize: 12),
               ),
             ],
           ),
@@ -1528,12 +1587,14 @@ class _UpgradeProScreenState extends State<UpgradeProScreen> {
     }
 
     // Route to appropriate view
+    if (_verificationStatus == 'valide') {
+      return _buildSuccessScreen();
+    }
+    if (_verificationStatus == 'refuse' || _correctionMode) {
+      return _buildFormScreen();
+    }
     if (_verificationStatus == 'en_attente' || _verificationStatus == 'en_attente_admin') {
       return _buildPendingScreen();
-    } else if (_verificationStatus == 'refuse') {
-      return _buildRefusedScreen();
-    } else if (_verificationStatus == 'valide') {
-      return _buildSuccessScreen();
     }
 
     return _buildFormScreen();
@@ -1610,16 +1671,18 @@ class _UpgradeProScreenState extends State<UpgradeProScreen> {
                       ),
                     ),
                     const SizedBox(height: 32),
-                    const Text(
-                      "Vérification en cours",
+                    Text(
+                      _verificationStatus == 'en_attente_admin'
+                          ? "Vérification en cours"
+                          : "Suivi de vos documents",
                       textAlign: TextAlign.center,
-                      style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Color(0xFF0D1F3C)),
+                      style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Color(0xFF0D1F3C)),
                     ),
                     const SizedBox(height: 12),
-                    const Text(
-                      "Vos justificatifs ont été transmis en toute sécurité. Notre équipe de modération et le système automatisé Veriff procèdent actuellement aux vérifications réglementaires.",
+                    Text(
+                      _statusMessage ?? 'Suivez l\'état de chaque document ci-dessous.',
                       textAlign: TextAlign.center,
-                      style: TextStyle(color: Color(0xFF6B7A99), fontSize: 13, height: 1.6),
+                      style: const TextStyle(color: Color(0xFF6B7A99), fontSize: 13, height: 1.6),
                     ),
                     const SizedBox(height: 32),
                     Container(
@@ -1633,13 +1696,33 @@ class _UpgradeProScreenState extends State<UpgradeProScreen> {
                       ),
                       child: Column(
                         children: [
-                          _buildStepStatusRow("Vérification d'identité (Veriff)", "En cours", true),
+                          _buildDocumentStatusCard('qid', "Carte d'identité Qatar (QID)"),
                           const Divider(height: 24, color: Color(0xFFF5F7FA)),
-                          _buildStepStatusRow("Attestation & Diplôme (QR Code)", _verificationStatus == 'en_attente_admin' ? "Vérification manuelle requise" : "En cours", true),
+                          _buildDocumentStatusCard('attestation', 'Attestation professionnelle'),
                         ],
                       ),
                     ),
-                    const SizedBox(height: 48),
+                    if (_canReplaceDoc('qid') || _canReplaceDoc('attestation')) ...[
+                      const SizedBox(height: 20),
+                      OutlinedButton.icon(
+                        onPressed: () => setState(() => _correctionMode = true),
+                        icon: const Icon(Icons.edit_document, color: Color(0xFF0D1F3C), size: 18),
+                        label: Text(
+                          _canReplaceDoc('qid') && _canReplaceDoc('attestation')
+                              ? 'Corriger les documents'
+                              : _canReplaceDoc('qid')
+                                  ? 'Remplacer le QID'
+                                  : 'Remplacer l\'attestation',
+                          style: const TextStyle(color: Color(0xFF0D1F3C), fontWeight: FontWeight.bold),
+                        ),
+                        style: OutlinedButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(vertical: 14),
+                          side: BorderSide(color: const Color(0xFF0D1F3C).withOpacity(0.2)),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                        ),
+                      ),
+                    ],
+                    const SizedBox(height: 32),
                     ElevatedButton.icon(
                       onPressed: _checkStatus,
                       icon: const Icon(Icons.refresh, color: Colors.white, size: 18),
@@ -1660,148 +1743,87 @@ class _UpgradeProScreenState extends State<UpgradeProScreen> {
     );
   }
 
-  Widget _buildStepStatusRow(String step, String status, bool pending) {
+  Widget _buildDocumentStatusCard(String docKey, String title) {
+    final statut = _docStatut(docKey);
+    final label = _docStatutLabel(docKey).isNotEmpty
+        ? _docStatutLabel(docKey)
+        : _docLabel(docKey);
+
+    Color badgeBg;
+    Color badgeText;
+    Color badgeBorder;
+    Widget badgeIcon;
+
+    switch (statut) {
+      case 'valide':
+        badgeBg = const Color(0xFFECFDF5);
+        badgeText = const Color(0xFF0B6640);
+        badgeBorder = const Color(0xFF2D9B6F);
+        badgeIcon = const Icon(Icons.check_circle, color: Color(0xFF2D9B6F), size: 14);
+        break;
+      case 'invalide':
+        badgeBg = const Color(0xFFFFF5F5);
+        badgeText = const Color(0xFF9B1C1C);
+        badgeBorder = const Color(0xFFEF4444);
+        badgeIcon = const Icon(Icons.cancel, color: Color(0xFFEF4444), size: 14);
+        break;
+      case 'en_attente_admin':
+        badgeBg = const Color(0xFFEFF6FF);
+        badgeText = const Color(0xFF1E40AF);
+        badgeBorder = const Color(0xFF3B82F6);
+        badgeIcon = const Icon(Icons.admin_panel_settings, color: Color(0xFF3B82F6), size: 14);
+        break;
+      default:
+        badgeBg = const Color(0xFFFFFBEB);
+        badgeText = const Color(0xFFC9A84C);
+        badgeBorder = const Color(0xFFC9A84C);
+        badgeIcon = const SizedBox(
+          width: 12,
+          height: 12,
+          child: CircularProgressIndicator(strokeWidth: 1.5, valueColor: AlwaysStoppedAnimation(Color(0xFFC9A84C))),
+        );
+    }
+
     return Row(
-      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(step, style: const TextStyle(fontWeight: FontWeight.w500, fontSize: 13, color: Color(0xFF0D1F3C))),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(title, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13, color: Color(0xFF0D1F3C))),
+              const SizedBox(height: 4),
+              Text(label, style: TextStyle(fontSize: 11, color: badgeText, height: 1.4)),
+            ],
+          ),
+        ),
+        const SizedBox(width: 8),
         Container(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
           decoration: BoxDecoration(
-            color: const Color(0xFFFFFBEB),
+            color: badgeBg,
             borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: badgeBorder.withOpacity(0.3)),
           ),
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              const SizedBox(
-                width: 10,
-                height: 10,
-                child: CircularProgressIndicator(strokeWidth: 1.5, valueColor: AlwaysStoppedAnimation(Color(0xFFC9A84C))),
-              ),
+              badgeIcon,
               const SizedBox(width: 6),
-              Text(status, style: const TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Color(0xFFC9A84C))),
+              Text(
+                statut == 'valide'
+                    ? 'Validé'
+                    : statut == 'invalide'
+                        ? 'Invalide'
+                        : statut == 'en_attente_admin'
+                            ? 'Manuel'
+                            : 'En cours',
+                style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: badgeText),
+              ),
             ],
           ),
         ),
       ],
-    );
-  }
-
-  // ❌ Verification Refused Screen
-  Widget _buildRefusedScreen() {
-    return Scaffold(
-      backgroundColor: const Color(0xFFF5F7FA),
-      body: SafeArea(
-        top: false,
-        child: Column(
-          children: [
-            // Header
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.only(top: 56, bottom: 24, left: 20, right: 20),
-              decoration: const BoxDecoration(
-                gradient: LinearGradient(
-                  colors: [Color(0xFF0D1F3C), Color(0xFF1A3560)],
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                ),
-              ),
-              child: Row(
-                children: [
-                  IconButton(
-                    onPressed: () => Navigator.pop(context),
-                    icon: const Icon(Icons.chevron_left, color: Colors.white, size: 20),
-                    style: IconButton.styleFrom(
-                      backgroundColor: Colors.white.withOpacity(0.1),
-                      fixedSize: const Size(36, 36),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                    ),
-                  ),
-                  const SizedBox(width: 16),
-                  const Text(
-                    "Vérification refusée",
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontFamily: 'Playfair Display',
-                      fontSize: 22,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            Expanded(
-              child: Padding(
-                padding: const EdgeInsets.all(24.0),
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    Center(
-                      child: Container(
-                        width: 90,
-                        height: 90,
-                        decoration: BoxDecoration(
-                          color: const Color(0xFFFDF2F2),
-                          shape: BoxShape.circle,
-                        ),
-                        alignment: Alignment.center,
-                        child: const Icon(Icons.cancel, color: Color(0xFFEF4444), size: 48),
-                      ),
-                    ),
-                    const SizedBox(height: 24),
-                    const Text(
-                      "Justificatifs non validés",
-                      textAlign: TextAlign.center,
-                      style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Color(0xFF0D1F3C)),
-                    ),
-                    const SizedBox(height: 12),
-                    const Text(
-                      "Malheureusement, votre dossier de candidature au statut Professionnel n'a pas pu être validé pour la raison suivante :",
-                      textAlign: TextAlign.center,
-                      style: TextStyle(color: Color(0xFF6B7A99), fontSize: 13, height: 1.5),
-                    ),
-                    const SizedBox(height: 24),
-                    Container(
-                      padding: const EdgeInsets.all(18),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFFFFF5F5),
-                        border: Border.all(color: const Color(0xFFEF4444).withOpacity(0.2)),
-                        borderRadius: BorderRadius.circular(16),
-                      ),
-                      child: Text(
-                        _raisonRefus ?? "Les documents soumis sont illisibles ou invalides.",
-                        textAlign: TextAlign.center,
-                        style: const TextStyle(
-                          color: Color(0xFF9B1C1C),
-                          fontWeight: FontWeight.bold,
-                          fontSize: 14,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 40),
-                    ElevatedButton(
-                      onPressed: _resetToForm,
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFFEF4444),
-                        padding: const EdgeInsets.symmetric(vertical: 16),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                      ),
-                      child: const Text("Réessayer la soumission", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-                    ),
-                    const SizedBox(height: 12),
-                    TextButton(
-                      onPressed: () => Navigator.pop(context),
-                      child: const Text("Retour au profil", style: TextStyle(color: Color(0xFF6B7A99), fontWeight: FontWeight.w600)),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
     );
   }
 
@@ -1843,7 +1865,7 @@ class _UpgradeProScreenState extends State<UpgradeProScreen> {
                     ),
                     const SizedBox(height: 36),
                     const Text(
-                      "Compte Pro activé ⭐",
+                      "Félicitations ! Compte professionnel activé !",
                       textAlign: TextAlign.center,
                       style: TextStyle(
                         fontSize: 24,
@@ -1854,7 +1876,7 @@ class _UpgradeProScreenState extends State<UpgradeProScreen> {
                     ),
                     const SizedBox(height: 16),
                     const Text(
-                      "Félicitations ! Votre profil professionnel a été entièrement validé et activé. Votre badge de prestataire de confiance est désormais visible par tous les clients.",
+                      "Votre profil professionnel est désormais actif. Votre badge de prestataire de confiance est visible par tous les clients.",
                       textAlign: TextAlign.center,
                       style: TextStyle(color: Color(0xFF6B7A99), fontSize: 14, height: 1.6),
                     ),
@@ -1903,7 +1925,13 @@ class _UpgradeProScreenState extends State<UpgradeProScreen> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   IconButton(
-                    onPressed: () => Navigator.pop(context),
+                    onPressed: () {
+                      if (_correctionMode) {
+                        setState(() => _correctionMode = false);
+                      } else {
+                        Navigator.pop(context);
+                      }
+                    },
                     icon: const Icon(Icons.chevron_left, color: Colors.white, size: 20),
                     padding: EdgeInsets.zero,
                     constraints: const BoxConstraints(),
@@ -1916,9 +1944,11 @@ class _UpgradeProScreenState extends State<UpgradeProScreen> {
                     ),
                   ),
                   const SizedBox(height: 16),
-                  const Text(
-                    "Devenir Professionnel",
-                    style: TextStyle(
+                  Text(
+                    _isPartialResubmit || _correctionMode
+                        ? "Corriger mes documents"
+                        : "Devenir Professionnel",
+                    style: const TextStyle(
                       color: Colors.white,
                       fontFamily: 'Playfair Display',
                       fontSize: 24,
@@ -1926,9 +1956,13 @@ class _UpgradeProScreenState extends State<UpgradeProScreen> {
                     ),
                   ),
                   const SizedBox(height: 4),
-                  const Text(
-                    "Envoyez vos justificatifs officiels pour validation",
-                    style: TextStyle(color: Colors.white70, fontSize: 13),
+                  Text(
+                    _isPartialResubmit
+                        ? "Remplacez uniquement les documents invalides"
+                        : _correctionMode
+                            ? "Remplacez uniquement le document concerné"
+                            : "Envoyez votre QID et votre attestation professionnelle",
+                    style: const TextStyle(color: Colors.white70, fontSize: 13),
                   ),
                 ],
               ),
@@ -1940,7 +1974,68 @@ class _UpgradeProScreenState extends State<UpgradeProScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    // Security shield
+                    if (_isPartialResubmit || _correctionMode) ...[
+                      Container(
+                        padding: const EdgeInsets.all(16),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFFFF5F5),
+                          borderRadius: BorderRadius.circular(16),
+                          border: Border.all(color: const Color(0xFFEF4444).withOpacity(0.2)),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              _statusMessage ??
+                                  (_isPartialResubmit
+                                      ? 'Documents invalides : ${_documentsInvalides.map(_docLabel).join(', ')}'
+                                      : 'Sélectionnez un nouveau fichier pour le document à remplacer.'),
+                              style: const TextStyle(
+                                color: Color(0xFF9B1C1C),
+                                fontWeight: FontWeight.bold,
+                                fontSize: 13,
+                                height: 1.5,
+                              ),
+                            ),
+                            if (_resubmitHint != null) ...[
+                              const SizedBox(height: 8),
+                              Text(
+                                _resubmitHint!,
+                                style: const TextStyle(
+                                  color: Color(0xFF9B1C1C),
+                                  fontSize: 12,
+                                  height: 1.4,
+                                ),
+                              ),
+                            ],
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                      Container(
+                        padding: const EdgeInsets.all(16),
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(16),
+                          boxShadow: [
+                            BoxShadow(color: Colors.black.withOpacity(0.02), blurRadius: 8),
+                          ],
+                        ),
+                        child: Column(
+                          children: [
+                            if (!_needsQid && _docStatut('qid') == 'valide')
+                              _buildDocumentStatusCard('qid', "Carte d'identité Qatar (QID)"),
+                            if (!_needsQid && _docStatut('qid') == 'valide' &&
+                                (!_needsAttestation || _docStatut('attestation') == 'valide'))
+                              const Divider(height: 20, color: Color(0xFFF5F7FA)),
+                            if (!_needsAttestation && _docStatut('attestation') == 'valide')
+                              _buildDocumentStatusCard('attestation', 'Attestation professionnelle'),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 20),
+                    ],
+
                     Container(
                       padding: const EdgeInsets.all(16),
                       decoration: BoxDecoration(
@@ -1963,97 +2058,70 @@ class _UpgradeProScreenState extends State<UpgradeProScreen> {
                     ),
                     const SizedBox(height: 20),
 
-                    // QID Textfield
-                    _buildSectionTitle("Numéro de QID *"),
-                    Container(
-                      height: 52,
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(16),
-                        border: Border.all(color: const Color(0xFF0D1F3C).withOpacity(0.12)),
-                      ),
-                      padding: const EdgeInsets.symmetric(horizontal: 16),
-                      child: TextField(
-                        controller: _qidController,
-                        keyboardType: TextInputType.number,
-                        style: const TextStyle(fontSize: 15, color: Color(0xFF0D1F3C), fontWeight: FontWeight.bold),
-                        decoration: const InputDecoration(
-                          hintText: "Ex: 29037400123",
-                          hintStyle: TextStyle(color: Color(0xFFA0ABBE), fontWeight: FontWeight.normal),
-                          border: InputBorder.none,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 20),
-
-                    // QID Recto / Verso Row
-                    _buildSectionTitle("Carte d'identité du Qatar (QID) (JPG/PNG uniquement) *"),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: _buildUploadBox(
-                            label: "QID Recto",
-                            filePath: _qidFrontPath,
-                            onTap: () => _pickDocument("qid_front", false, 5),
-                            onRemove: () => _removeFile("qid_front"),
-                          ),
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: _buildUploadBox(
-                            label: "QID Verso",
-                            filePath: _qidBackPath,
-                            onTap: () => _pickDocument("qid_back", false, 5),
-                            onRemove: () => _removeFile("qid_back"),
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 20),
-
-                    // Diploma
-                    _buildSectionTitle("Attestation ou Diplôme (JPG/PNG/PDF) *"),
-                    _buildUploadBox(
-                      label: "Uploader diplôme / certificat (Max 10Mo)",
-                      filePath: _diplomaPath,
-                      onTap: () => _pickDocument("diploma", true, 10),
-                      onRemove: () => _removeFile("diploma"),
-                    ),
-                    if (_scannedQrCode != null) ...[
-                      const SizedBox(height: 8),
+                    if (_needsQid) ...[
+                      _buildSectionTitle("Numéro de QID *"),
                       Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                        height: 52,
                         decoration: BoxDecoration(
-                          color: const Color(0xFFECFDF5),
-                          borderRadius: BorderRadius.circular(10),
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(16),
+                          border: Border.all(color: const Color(0xFF0D1F3C).withOpacity(0.12)),
                         ),
-                        child: Row(
-                          children: [
-                            const Icon(Icons.check_circle, color: Color(0xFF2D9B6F), size: 16),
-                            const SizedBox(width: 8),
-                            Expanded(
-                              child: Text(
-                                "QR Code scanné et associé au dossier",
-                                style: const TextStyle(fontSize: 11, color: Color(0xFF0B6640), fontWeight: FontWeight.bold),
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                            ),
-                          ],
+                        padding: const EdgeInsets.symmetric(horizontal: 16),
+                        child: TextField(
+                          controller: _qidController,
+                          keyboardType: TextInputType.number,
+                          style: const TextStyle(fontSize: 15, color: Color(0xFF0D1F3C), fontWeight: FontWeight.bold),
+                          decoration: const InputDecoration(
+                            hintText: "Ex: 29037400123",
+                            hintStyle: TextStyle(color: Color(0xFFA0ABBE), fontWeight: FontWeight.normal),
+                            border: InputBorder.none,
+                          ),
                         ),
                       ),
+                      const SizedBox(height: 20),
+                      _buildSectionTitle("Carte d'identité Qatar (QID) — Recto / Verso (JPG/PNG) *"),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: _buildUploadBox(
+                              label: "QID Recto",
+                              filePath: _qidFrontPath,
+                              onTap: () => _pickDocument("qid_front", false, 5),
+                              onRemove: () => _removeFile("qid_front"),
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: _buildUploadBox(
+                              label: "QID Verso",
+                              filePath: _qidBackPath,
+                              onTap: () => _pickDocument("qid_back", false, 5),
+                              onRemove: () => _removeFile("qid_back"),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 20),
                     ],
-                    const SizedBox(height: 20),
 
-                    // Professional License (Optional)
-                    _buildSectionTitle("Licence Professionnelle (Optionnel, JPG/PNG/PDF)"),
-                    _buildUploadBox(
-                      label: "Uploader licence commerciale / registre (Max 10Mo)",
-                      filePath: _licensePath,
-                      onTap: () => _pickDocument("license", true, 10),
-                      onRemove: () => _removeFile("license"),
-                    ),
+                    if (_needsAttestation) ...[
+                      _buildSectionTitle("Attestation professionnelle (JPG/PNG/PDF) *"),
+                      _buildUploadBox(
+                        label: "Uploader l'attestation (Max 10 Mo)",
+                        filePath: _diplomaPath,
+                        onTap: () => _pickDocument("diploma", true, 10),
+                        onRemove: () => _removeFile("diploma"),
+                      ),
+                      const SizedBox(height: 8),
+                      const Text(
+                        "Le QR code sera scanné automatiquement. S'il est absent ou illisible, un administrateur vérifiera votre document manuellement.",
+                        style: TextStyle(color: Color(0xFF6B7A99), fontSize: 11, height: 1.4),
+                      ),
+                      const SizedBox(height: 20),
+                    ],
 
-                    const SizedBox(height: 36),
+                    const SizedBox(height: 16),
 
                     // Submit Button
                     Container(
@@ -2078,9 +2146,11 @@ class _UpgradeProScreenState extends State<UpgradeProScreen> {
                           padding: const EdgeInsets.symmetric(vertical: 16),
                           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
                         ),
-                        child: const Text(
-                          "Soumettre mon dossier de pro",
-                          style: TextStyle(
+                        child: Text(
+                          _isPartialResubmit || _correctionMode
+                              ? "Resoumettre les documents corrigés"
+                              : "Soumettre mon dossier",
+                          style: const TextStyle(
                             color: Colors.white,
                             fontSize: 15,
                             fontWeight: FontWeight.bold,
@@ -2185,73 +2255,6 @@ class _UpgradeProScreenState extends State<UpgradeProScreen> {
                 ],
               ),
         ),
-    );
-  }
-}
-class QrScannerScreen extends StatefulWidget {
-  const QrScannerScreen({super.key});
-
-  @override
-  State<QrScannerScreen> createState() => _QrScannerScreenState();
-}
-
-class _QrScannerScreenState extends State<QrScannerScreen> {
-  bool _scanned = false;
-  MobileScannerController cameraController = MobileScannerController();
-
-  @override
-  void dispose() {
-    cameraController.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: Colors.black,
-      appBar: AppBar(
-        backgroundColor: const Color(0xFF0D1F3C),
-        foregroundColor: Colors.white,
-        title: const Text('Scanner le QR Code'),
-      ),
-      body: Stack(
-        children: [
-          MobileScanner(
-            controller: cameraController,
-            onDetect: (capture) {
-              if (_scanned) return;
-              final List<Barcode> barcodes = capture.barcodes;
-              for (final barcode in barcodes) {
-                if (barcode.rawValue != null) {
-                  setState(() => _scanned = true);
-                  Navigator.pop(context, barcode.rawValue);
-                  break;
-                }
-              }
-            },
-          ),
-          Center(
-            child: Container(
-              width: 260,
-              height: 260,
-              decoration: BoxDecoration(
-                border: Border.all(color: const Color(0xFFC9A84C), width: 3),
-                borderRadius: BorderRadius.circular(24),
-              ),
-            ),
-          ),
-          const Positioned(
-            bottom: 60,
-            left: 20,
-            right: 20,
-            child: Text(
-              "Placez le QR Code de votre attestation au centre du cadre",
-              textAlign: TextAlign.center,
-              style: TextStyle(color: Colors.white70, fontSize: 13, fontWeight: FontWeight.bold),
-            ),
-          ),
-        ],
-      ),
     );
   }
 }

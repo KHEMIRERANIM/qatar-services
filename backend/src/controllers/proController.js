@@ -8,10 +8,29 @@ const { v4: uuidv4 } = require('uuid');
 
 // Configure Cloudinary
 cloudinary.config({
-  cloud_name: process.env.CLOUDINARY_CLOUD_NAME || 'Root',
-  api_key: process.env.CLOUDINARY_API_KEY || '888797846191552',
-  api_secret: process.env.CLOUDINARY_API_SECRET || '2JrWAP0cjLVziJaiffwYyPfvNj8'
+  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+  api_key: process.env.CLOUDINARY_API_KEY,
+  api_secret: process.env.CLOUDINARY_API_SECRET
 });
+
+const getBackendBaseUrl = (req) =>
+  process.env.BACKEND_URL || `${req.protocol}://${req.get('host')}`;
+
+const shouldUseNativeVeriff = (backendBaseUrl) => {
+  if (process.env.VERIFF_USE_MOCK === 'true') return true;
+  // Veriff exige un callback HTTPS public — en local on utilise la caméra native
+  if (!backendBaseUrl.startsWith('https://')) return true;
+  return false;
+};
+
+const isBrokenTunnelUrl = (url) => {
+  if (!url) return false;
+  const lower = url.toLowerCase();
+  return lower.includes('loca.lt')
+    || lower.includes('localtunnel')
+    || lower.includes('ngrok-free.app')
+    || lower.includes('trycloudflare.com');
+};
 
 // Helper: Upload file buffer to Cloudinary
 const uploadToCloudinary = (fileBuffer, folder, filename) => {
@@ -70,125 +89,402 @@ const sendNotification = async (userId, message) => {
   }
 };
 
+const DOC_LABELS = {
+  qid: "Carte d'identité Qatar (QID)",
+  attestation: 'Attestation professionnelle'
+};
+
+const USER_ERROR = 'Une erreur est survenue. Veuillez réessayer plus tard.';
+
+const parseDocumentsInvalides = (value) => {
+  if (!value) return [];
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+};
+
+const serializeDocumentsInvalides = (docs) => JSON.stringify([...new Set(docs)]);
+
+const buildStatusMessage = (statut, documentsInvalides = []) => {
+  switch (statut) {
+    case 'en_attente':
+      return 'Vérification en cours — consultez le détail par document ci-dessous';
+    case 'en_attente_admin':
+      return 'Votre QID est validé. L\'attestation est en vérification manuelle.';
+    case 'valide':
+      return 'Félicitations ! Compte professionnel activé !';
+    case 'refuse': {
+      if (documentsInvalides.length > 0) {
+        const labels = documentsInvalides.map((d) => DOC_LABELS[d] || d);
+        return `Documents invalides : ${labels.join(', ')}`;
+      }
+      return 'Documents invalides : veuillez vérifier vos justificatifs';
+    }
+    default:
+      return null;
+  }
+};
+
+const buildDocumentsStatus = (statut, doc, documentsInvalides = []) => {
+  const qidInvalid = documentsInvalides.includes('qid');
+  const attInvalid = documentsInvalides.includes('attestation');
+  const qidVerified = doc?.qid_verifie === 1;
+  const attVerified = doc?.qr_code_valide === 1;
+
+  const make = (statutDoc, label, canReplace) => ({
+    statut: statutDoc,
+    label,
+    can_replace: canReplace
+  });
+
+  let qid = make('en_cours', 'En cours de vérification', false);
+  let attestation = make('en_cours', 'En cours de vérification', false);
+
+  if (statut === 'valide') {
+    qid = make('valide', 'Validé', false);
+    attestation = make('valide', 'Validé', false);
+  } else if (statut === 'refuse') {
+    if (qidInvalid) {
+      qid = make('invalide', 'Invalide — veuillez le remplacer', true);
+    } else if (qidVerified) {
+      qid = make('valide', 'Validé', false);
+    } else {
+      qid = make('invalide', 'Invalide — veuillez le remplacer', true);
+    }
+
+    if (attInvalid) {
+      attestation = make('invalide', 'Invalide — veuillez la remplacer', true);
+    } else if (attVerified) {
+      attestation = make('valide', 'Validée', false);
+    } else if (!qidInvalid) {
+      attestation = make('invalide', 'Invalide — veuillez la remplacer', true);
+    }
+  } else if (statut === 'en_attente_admin') {
+    qid = qidVerified
+      ? make('valide', 'Validé', false)
+      : make('en_cours', 'En cours de vérification', false);
+    attestation = make(
+      'en_attente_admin',
+      'Vérification manuelle — vous pouvez soumettre une autre attestation',
+      true
+    );
+  } else if (statut === 'en_attente') {
+    qid = qidVerified
+      ? make('valide', 'Validé', false)
+      : make('en_cours', 'En cours de vérification', false);
+    attestation = attVerified
+      ? make('valide', 'Validée', false)
+      : make('en_cours', 'En cours de vérification', false);
+  }
+
+  return { qid, attestation };
+};
+
+const mapRejectionToInvalidDocs = (raisonRefus, docRaisonRefus) => {
+  const docs = [];
+  const qidReasons = ['QID invalide', 'QID déjà utilisé', 'Nom de profil incomplet'];
+  if (qidReasons.includes(raisonRefus)) docs.push('qid');
+  if (raisonRefus === 'Attestation invalide' || docRaisonRefus === 'QR Code invalide') {
+    docs.push('attestation');
+  }
+  return [...new Set(docs)];
+};
+
+const activateProAccount = async (userId) => {
+  await db.query(
+    `UPDATE prestataires SET
+      statut_verification = 'valide',
+      badge_verifie = TRUE,
+      raison_refus = NULL,
+      documents_invalides = NULL,
+      verifie_le = NOW()
+     WHERE user_id = ?`,
+    [userId]
+  );
+  await db.query("UPDATE users SET statut = 'actif' WHERE id = ?", [userId]);
+  await sendNotification(userId, 'Compte Pro activé ⭐');
+};
+
+const rejectVerification = async (userId, raisonRefus, documentsInvalides, docRaisonRefus = null) => {
+  const invalidDocs = documentsInvalides.length > 0
+    ? documentsInvalides
+    : mapRejectionToInvalidDocs(raisonRefus, docRaisonRefus);
+
+  await db.query(
+    `UPDATE prestataires SET
+      statut_verification = 'refuse',
+      badge_verifie = FALSE,
+      raison_refus = ?,
+      documents_invalides = ?,
+      verifie_le = NOW()
+     WHERE user_id = ?`,
+    [raisonRefus, serializeDocumentsInvalides(invalidDocs), userId]
+  );
+
+  if (docRaisonRefus) {
+    await db.query(
+      'UPDATE documents SET raison_refus = ? WHERE user_id = ?',
+      [docRaisonRefus, userId]
+    );
+  }
+
+  await sendNotification(userId, 'Document refusé');
+  return invalidDocs;
+};
+
+// Helper: Verify attestation QR code from document URL
+const verifyAttestationQr = async (attestationUrl, user) => {
+  let qrCodeValide = false;
+  let qrReason = 'Pas de QR Code';
+
+  const isImage = attestationUrl.endsWith('.jpg') || attestationUrl.endsWith('.jpeg')
+    || attestationUrl.endsWith('.png') || attestationUrl.includes('image');
+
+  if (!isImage) {
+    console.log('Attestation is a PDF or other format, skipping QR Code reading (will require admin verification).');
+    return { qrCodeValide, qrReason };
+  }
+
+  console.log('Attempting to read QR code from attestation image...');
+  const qrCodeUrl = await readQrCode(attestationUrl);
+  if (!qrCodeUrl) {
+    return { qrCodeValide, qrReason };
+  }
+
+  qrReason = 'QR Code invalide';
+  try {
+    console.log(`Verifying QR Code URL: ${qrCodeUrl}`);
+    const response = await axios.get(qrCodeUrl, { timeout: 8000 });
+    const isOfficial = qrCodeUrl.includes('.qa') || qrCodeUrl.includes('gov')
+      || qrCodeUrl.includes('edu') || response.status === 200;
+    const html = (response.data || '').toString().toLowerCase();
+    const userPrenom = user.prenom.toLowerCase();
+    const userNom = user.nom.toLowerCase();
+    const nameMatches = html.includes(userPrenom) || html.includes(userNom);
+
+    if (isOfficial && nameMatches) {
+      qrCodeValide = true;
+      qrReason = null;
+      console.log('QR Code verification successful! Site is official and name matches.');
+    } else {
+      console.log(`QR Code failed verification. isOfficial: ${isOfficial}, nameMatches: ${nameMatches}`);
+    }
+  } catch (err) {
+    console.error('Failed to verify QR Code URL contents:', err.message);
+  }
+
+  return { qrCodeValide, qrReason };
+};
+
+const finalizeAttestationAfterQid = async (userId, doc, user) => {
+  if (doc.qr_code_valide === 1) {
+    await activateProAccount(userId);
+    return { status: 'valide', message: buildStatusMessage('valide') };
+  }
+
+  if (doc.raison_refus === 'Pas de QR Code') {
+    await db.query(
+      `UPDATE prestataires SET
+        statut_verification = 'en_attente_admin',
+        raison_refus = 'Pas de QR Code sur l attestation',
+        documents_invalides = NULL,
+        verifie_le = NOW()
+       WHERE user_id = ?`,
+      [userId]
+    );
+    console.log(`User ${userId} has no QR Code. Status set to en_attente_admin.`);
+    return { status: 'en_attente_admin', message: buildStatusMessage('en_attente_admin') };
+  }
+
+  await rejectVerification(userId, 'Attestation invalide', ['attestation'], 'QR Code invalide');
+  console.log(`User ${userId} has an invalid QR Code. Status set to refuse.`);
+  return {
+    status: 'refuse',
+    message: buildStatusMessage('refuse', ['attestation']),
+    documents_invalides: ['attestation']
+  };
+};
+
 // ═══════════════════════════════════════════════════════════════
 // POST /pro/upload-documents
 // ═══════════════════════════════════════════════════════════════
 exports.uploadDocuments = async (req, res) => {
   try {
     const userId = req.user.id;
-    const { qid_num } = req.body;
+    const qid_num = req.body.qid_num || req.body.qid_number;
 
-    // 1. Validations
-    if (!qid_num) {
-      return res.status(400).json({ message: 'Le numéro QID est obligatoire.' });
-    }
+    const [existingPres] = await db.query(
+      'SELECT statut_verification, documents_invalides FROM prestataires WHERE user_id = ?',
+      [userId]
+    );
+    const presStatut = existingPres.length > 0 ? existingPres[0].statut_verification : null;
+    const isRefuseResubmit = presStatut === 'refuse';
+    const isAttestationCorrection = presStatut === 'en_attente_admin';
+    const isResubmit = isRefuseResubmit || isAttestationCorrection;
+    const invalidDocs = isRefuseResubmit
+      ? parseDocumentsInvalides(existingPres[0].documents_invalides)
+      : isAttestationCorrection
+        ? ['attestation']
+        : [];
 
-    if (!req.files || !req.files.qid_recto || !req.files.qid_verso || !req.files.attestation) {
-      return res.status(400).json({ message: 'QID Recto, Verso et l\'Attestation/Diplôme sont obligatoires.' });
-    }
+    const hasQidRecto = req.files && req.files.qid_recto;
+    const hasQidVerso = req.files && req.files.qid_verso;
+    const hasAttestation = req.files && req.files.attestation;
+    const hasQidUpload = hasQidRecto || hasQidVerso;
 
-    const { qid_recto, qid_verso, attestation, licence } = req.files;
-
-    // Validate QID Recto
-    if (qid_recto.size > 5 * 1024 * 1024) {
-      return res.status(400).json({ message: 'Le fichier QID Recto dépasse la limite de 5 Mo.' });
-    }
-    if (!['image/jpeg', 'image/png'].includes(qid_recto.mimetype)) {
-      return res.status(400).json({ message: 'Le QID Recto doit être au format JPG ou PNG.' });
-    }
-
-    // Validate QID Verso
-    if (qid_verso.size > 5 * 1024 * 1024) {
-      return res.status(400).json({ message: 'Le fichier QID Verso dépasse la limite de 5 Mo.' });
-    }
-    if (!['image/jpeg', 'image/png'].includes(qid_verso.mimetype)) {
-      return res.status(400).json({ message: 'Le QID Verso doit être au format JPG ou PNG.' });
-    }
-
-    // Validate Attestation
-    if (attestation.size > 10 * 1024 * 1024) {
-      return res.status(400).json({ message: 'L\'attestation/diplôme dépasse la limite de 10 Mo.' });
-    }
-    if (!['image/jpeg', 'image/png', 'application/pdf'].includes(attestation.mimetype)) {
-      return res.status(400).json({ message: 'L\'attestation doit être au format JPG, PNG ou PDF.' });
-    }
-
-    // Validate Licence if provided
-    if (licence) {
-      if (licence.size > 10 * 1024 * 1024) {
-        return res.status(400).json({ message: 'La licence dépasse la limite de 10 Mo.' });
+    if (isResubmit) {
+      if (invalidDocs.length === 0) {
+        return res.status(400).json({ message: 'Aucun document à corriger.' });
       }
-      if (!['image/jpeg', 'image/png', 'application/pdf'].includes(licence.mimetype)) {
-        return res.status(400).json({ message: 'La licence doit être au format JPG, PNG ou PDF.' });
+      if (!hasQidUpload && !hasAttestation) {
+        return res.status(400).json({
+          message: 'Veuillez corriger uniquement les documents invalides et resoumettre.'
+        });
+      }
+      if (invalidDocs.includes('qid')) {
+        if (!qid_num) {
+          return res.status(400).json({ message: 'Le numéro QID est obligatoire.' });
+        }
+        if (!hasQidRecto || !hasQidVerso) {
+          return res.status(400).json({ message: 'Veuillez charger le QID Recto et Verso.' });
+        }
+      }
+      if (invalidDocs.includes('attestation') && !hasAttestation) {
+        return res.status(400).json({ message: 'Veuillez charger votre attestation professionnelle.' });
+      }
+      if (invalidDocs.includes('qid') && hasAttestation && !invalidDocs.includes('attestation')) {
+        return res.status(400).json({
+          message: 'Veuillez corriger uniquement les documents invalides et resoumettre.'
+        });
+      }
+      if (invalidDocs.includes('attestation') && hasQidUpload && !invalidDocs.includes('qid')) {
+        return res.status(400).json({
+          message: 'Veuillez corriger uniquement les documents invalides et resoumettre.'
+        });
+      }
+    } else {
+      if (!qid_num) {
+        return res.status(400).json({ message: 'Le numéro QID est obligatoire.' });
+      }
+      if (!hasQidRecto || !hasQidVerso) {
+        return res.status(400).json({ message: 'Veuillez charger le QID Recto et Verso.' });
+      }
+      if (!hasAttestation) {
+        return res.status(400).json({
+          message: 'L\'attestation professionnelle est obligatoire.'
+        });
       }
     }
 
-    // 2. Upload to Cloudinary
+    const qid_recto = hasQidRecto ? req.files.qid_recto : null;
+    const qid_verso = hasQidVerso ? req.files.qid_verso : null;
+    const attestation = hasAttestation ? req.files.attestation : null;
+
+    if (qid_recto) {
+      if (qid_recto.size > 5 * 1024 * 1024) {
+        return res.status(400).json({ message: 'Le fichier QID Recto dépasse la limite de 5 Mo.' });
+      }
+if (!['image/jpeg', 'image/png', 'image/jpg'].includes(qid_recto.mimetype)) {        return res.status(400).json({ message: 'Le QID Recto doit être au format JPG ou PNG.' });
+      }
+    }
+
+    if (qid_verso) {
+      if (qid_verso.size > 5 * 1024 * 1024) {
+        return res.status(400).json({ message: 'Le fichier QID Verso dépasse la limite de 5 Mo.' });
+      }
+      if (!['image/jpeg', 'image/png'].includes(qid_verso.mimetype)) {
+        return res.status(400).json({ message: 'Le QID Verso doit être au format JPG ou PNG.' });
+      }
+    }
+
+    if (attestation) {
+      if (attestation.size > 10 * 1024 * 1024) {
+        return res.status(400).json({ message: 'L\'attestation dépasse la limite de 10 Mo.' });
+      }
+      if (!['image/jpeg', 'image/png', 'application/pdf'].includes(attestation.mimetype)) {
+        return res.status(400).json({ message: 'L\'attestation doit être au format JPG, PNG ou PDF.' });
+      }
+    }
+
     console.log(`Starting Cloudinary uploads for user ${userId}...`);
     const timestamp = Date.now();
-    
-    const qidRectoUrl = await uploadToCloudinary(
-      qid_recto.data,
-      'qatar-services/qid',
-      `user_${userId}_qid_recto_${timestamp}`
-    );
-    
-    const qidVersoUrl = await uploadToCloudinary(
-      qid_verso.data,
-      'qatar-services/qid',
-      `user_${userId}_qid_verso_${timestamp}`
-    );
-    
-    const attestationUrl = await uploadToCloudinary(
-      attestation.data,
-      'qatar-services/attestations',
-      `user_${userId}_attestation_${timestamp}`
-    );
 
-    let licenceUrl = null;
-    if (licence) {
-      licenceUrl = await uploadToCloudinary(
-        licence.data,
-        'qatar-services/licences',
-        `user_${userId}_licence_${timestamp}`
+    const [existingDocs] = await db.query('SELECT * FROM documents WHERE user_id = ?', [userId]);
+    const existingDoc = existingDocs[0] || {};
+
+    let qidRectoUrl = existingDoc.qid_recto;
+    let qidVersoUrl = existingDoc.qid_verso;
+    let attestationUrl = existingDoc.attestation;
+    const finalQidNum = qid_num || existingDoc.qid_num;
+
+    if (qid_recto) {
+      qidRectoUrl = await uploadToCloudinary(
+        qid_recto.data,
+        'qatar-services/qid',
+        `user_${userId}_qid_recto_${timestamp}`
       );
     }
 
-    // 3. Save to MySQL (documents table)
-    const [existingDocs] = await db.query('SELECT id FROM documents WHERE user_id = ?', [userId]);
-    
+    if (qid_verso) {
+      qidVersoUrl = await uploadToCloudinary(
+        qid_verso.data,
+        'qatar-services/qid',
+        `user_${userId}_qid_verso_${timestamp}`
+      );
+    }
+
+    if (attestation) {
+      attestationUrl = await uploadToCloudinary(
+        attestation.data,
+        'qatar-services/attestations',
+        `user_${userId}_attestation_${timestamp}`
+      );
+    }
+
     if (existingDocs.length > 0) {
+      const resetQidVerifie = qid_recto || qid_verso ? 0 : existingDoc.qid_verifie;
       await db.query(
         `UPDATE documents SET
           qid_num = ?,
           qid_recto = ?,
           qid_verso = ?,
           attestation = ?,
-          licence = ?,
-          onfido_check_id = NULL,
-          qr_code_valide = FALSE,
+          onfido_check_id = ?,
+          qr_code_valide = ?,
+          qid_verifie = ?,
           raison_refus = NULL,
           verifie_le = NULL
          WHERE user_id = ?`,
-        [qid_num, qidRectoUrl, qidVersoUrl, attestationUrl, licenceUrl, userId]
+        [
+          finalQidNum,
+          qidRectoUrl,
+          qidVersoUrl,
+          attestationUrl,
+          qid_recto || qid_verso ? null : existingDoc.onfido_check_id,
+          attestation ? 0 : existingDoc.qr_code_valide,
+          resetQidVerifie,
+          userId
+        ]
       );
     } else {
       await db.query(
         `INSERT INTO documents
-          (user_id, qid_num, qid_recto, qid_verso, attestation, licence)
-         VALUES (?, ?, ?, ?, ?, ?)`,
-        [userId, qid_num, qidRectoUrl, qidVersoUrl, attestationUrl, licenceUrl]
+          (user_id, qid_num, qid_recto, qid_verso, attestation)
+         VALUES (?, ?, ?, ?, ?)`,
+        [userId, finalQidNum, qidRectoUrl, qidVersoUrl, attestationUrl]
       );
     }
 
-    // Initialize/reset prestataire status to 'en_attente'
-    const [existingPres] = await db.query('SELECT id FROM prestataires WHERE user_id = ?', [userId]);
     if (existingPres.length > 0) {
       await db.query(
         `UPDATE prestataires SET
           statut_verification = 'en_attente',
           badge_verifie = FALSE,
           raison_refus = NULL,
+          documents_invalides = NULL,
           verifie_le = NULL
          WHERE user_id = ?`,
         [userId]
@@ -203,19 +499,18 @@ exports.uploadDocuments = async (req, res) => {
 
     res.status(200).json({
       success: true,
-      message: 'Documents téléchargés avec succès et enregistrés dans la base de données.',
+      message: 'Documents téléchargés avec succès.',
       documents: {
-        qid_num,
+        qid_num: finalQidNum,
         qid_recto: qidRectoUrl,
         qid_verso: qidVersoUrl,
-        attestation: attestationUrl,
-        licence: licenceUrl
+        attestation: attestationUrl
       }
     });
 
   } catch (error) {
     console.error('Error in uploadDocuments:', error);
-    res.status(500).json({ message: error.message });
+    res.status(500).json({ message: USER_ERROR });
   }
 };
 
@@ -226,14 +521,12 @@ exports.verify = async (req, res) => {
   try {
     const userId = req.user.id;
 
-    // Fetch user details
     const [users] = await db.query('SELECT prenom, nom, email FROM users WHERE id = ?', [userId]);
     const user = users[0];
     if (!user) {
       return res.status(404).json({ message: 'Utilisateur introuvable.' });
     }
 
-    // Fetch user documents
     const [documents] = await db.query('SELECT * FROM documents WHERE user_id = ?', [userId]);
     if (documents.length === 0) {
       return res.status(400).json({ message: 'Veuillez d\'abord télécharger vos documents.' });
@@ -241,97 +534,45 @@ exports.verify = async (req, res) => {
 
     const doc = documents[0];
 
-    // ───────────────────────────────────────────────────────────
-    // ÉTAPE 1 — Vérification QID MySQL
-    // ───────────────────────────────────────────────────────────
-    
-    // 1. QID unique dans MySQL
+    if (!doc.qid_verifie && (!doc.qid_recto || !doc.qid_verso || !doc.qid_num)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Veuillez charger le QID Recto et Verso.'
+      });
+    }
+
+    if (!doc.attestation) {
+      return res.status(400).json({
+        success: false,
+        message: 'Veuillez charger votre attestation professionnelle.'
+      });
+    }
+
     const [existingQid] = await db.query(
       'SELECT id FROM documents WHERE qid_num = ? AND user_id != ?',
       [doc.qid_num, userId]
     );
     if (existingQid.length > 0) {
-      // QID already in use! We reject the process
-      await db.query(
-        `UPDATE prestataires SET
-          statut_verification = 'refuse',
-          raison_refus = 'QID déjà utilisé',
-          verifie_le = NOW()
-         WHERE user_id = ?`,
-        [userId]
-      );
-      await sendNotification(userId, 'Document refusé');
+      const invalidDocs = await rejectVerification(userId, 'QID déjà utilisé', ['qid']);
       return res.status(400).json({
         success: false,
         status: 'refuse',
-        message: 'Ce numéro QID est déjà enregistré par un autre professionnel.'
+        message: buildStatusMessage('refuse', invalidDocs),
+        documents_invalides: invalidDocs
       });
     }
 
-    // 2. Nom correspond dans MySQL (we verify we have a valid name in profile)
     if (!user.prenom || !user.nom) {
-      await db.query(
-        `UPDATE prestataires SET
-          statut_verification = 'refuse',
-          raison_refus = 'Nom de profil incomplet',
-          verifie_le = NOW()
-         WHERE user_id = ?`,
-        [userId]
-      );
-      await sendNotification(userId, 'Document refusé');
+      const invalidDocs = await rejectVerification(userId, 'Nom de profil incomplet', ['qid']);
       return res.status(400).json({
         success: false,
         status: 'refuse',
-        message: 'Le prénom et le nom de votre profil doivent être renseignés.'
+        message: buildStatusMessage('refuse', invalidDocs),
+        documents_invalides: invalidDocs
       });
     }
 
-    // ───────────────────────────────────────────────────────────
-    // ÉTAPE 3 — QR Code attestation (Run beforehand to store state)
-    // ───────────────────────────────────────────────────────────
-    let qrCodeValide = false;
-    let qrReason = 'Pas de QR Code';
-
-    // Verify if it's an image. If PDF, we can't parse QR with Jimp, so it defaults to "Pas de QR Code"
-    const isImage = doc.attestation.endsWith('.jpg') || doc.attestation.endsWith('.jpeg') || doc.attestation.endsWith('.png') || doc.attestation.includes('image');
-    
-    if (isImage) {
-      console.log('Attempting to read QR code from attestation image...');
-      const qrCodeUrl = await readQrCode(doc.attestation);
-      if (qrCodeUrl) {
-        qrReason = 'QR Code invalide';
-        try {
-          console.log(`Verifying QR Code URL: ${qrCodeUrl}`);
-          
-          // Make HTTP GET request to verify the official site
-          const response = await axios.get(qrCodeUrl, { timeout: 8000 });
-          
-          // Verify if official site (e.g. government/educational domains or HTTP success)
-          const isOfficial = qrCodeUrl.includes('.qa') || qrCodeUrl.includes('gov') || qrCodeUrl.includes('edu') || response.status === 200;
-          
-          // Nom correspond in response?
-          const html = (response.data || '').toString().toLowerCase();
-          const userPrenom = user.prenom.toLowerCase();
-          const userNom = user.nom.toLowerCase();
-          
-          const nameMatches = html.includes(userPrenom) || html.includes(userNom);
-          
-          if (isOfficial && nameMatches) {
-            qrCodeValide = true;
-            qrReason = null;
-            console.log('QR Code verification successful! Site is official and name matches.');
-          } else {
-            console.log(`QR Code failed verification. isOfficial: ${isOfficial}, nameMatches: ${nameMatches}`);
-          }
-        } catch (err) {
-          console.error('Failed to verify QR Code URL contents:', err.message);
-        }
-      }
-    } else {
-      console.log('Attestation is a PDF or other format, skipping QR Code reading (will require admin verification).');
-    }
-
-    // Update documents table with QR Code results
+    const { qrCodeValide, qrReason } = await verifyAttestationQr(doc.attestation, user);
     await db.query(
       `UPDATE documents SET
         qr_code_valide = ?,
@@ -340,76 +581,167 @@ exports.verify = async (req, res) => {
       [qrCodeValide ? 1 : 0, qrReason, userId]
     );
 
-    // ───────────────────────────────────────────────────────────
-    // ÉTAPE 2 — Veriff (Create Session)
-    // ───────────────────────────────────────────────────────────
-    const veriffApiKey = process.env.VERIFF_API_KEY;
-    const veriffApiSecret = process.env.VERIFF_API_SECRET;
-    const veriffBaseUrl = process.env.VERIFF_BASE_URL || 'https://stationapi.veriff.com';
-    const callbackUrl = `${req.protocol}://${req.get('host')}/veriff-callback`;
+    const updatedDoc = { ...doc, qr_code_valide: qrCodeValide ? 1 : 0, raison_refus: qrReason };
 
-    let veriffSessionId = '';
-    let veriffWebViewUrl = '';
+    // QID déjà validé par Veriff → vérifier uniquement l'attestation
+    if (doc.qid_verifie === 1) {
+      console.log(`User ${userId} QID already verified. Processing attestation only...`);
+      const result = await finalizeAttestationAfterQid(userId, updatedDoc, user);
 
-    try {
-      console.log('Creating Veriff Session...');
-      const veriffRes = await axios.post(
-        `${veriffBaseUrl}/v1/sessions`,
-        {
-          verification: {
-            callback: callbackUrl,
-            person: {
-              firstName: user.prenom,
-              lastName: user.nom
-            },
-            document: {
-              type: 'ID_CARD',
-              country: 'QA'
-            },
-            vendorData: userId.toString()
-          }
-        },
-        {
-          headers: {
-            'X-AUTH-CLIENT': veriffApiKey,
-            'Content-Type': 'application/json'
-          }
-        }
-      );
-
-      if (veriffRes.data && veriffRes.data.status === 'success') {
-        veriffSessionId = veriffRes.data.verification.id;
-        veriffWebViewUrl = veriffRes.data.verification.url;
-        console.log(`Veriff session created successfully: ${veriffSessionId}`);
-      } else {
-        throw new Error('Veriff API did not return success status');
+      if (result.status === 'valide') {
+        return res.status(200).json({
+          success: true,
+          status: 'valide',
+          message: result.message,
+          skipVeriff: true
+        });
       }
-    } catch (veriffErr) {
-      console.error('Veriff API call failed, generating mock verification URL:', veriffErr.message);
-      
-      // Fallback: Generate local Mock Veriff session for demo robustness!
-      // This is extremely important so that the application is testable even without internet or sandbox setup
-      veriffSessionId = `mock_session_${uuidv4()}`;
-      veriffWebViewUrl = `${req.protocol}://${req.get('host')}/pro/mock-veriff?session_id=${veriffSessionId}&user_id=${userId}`;
+
+      if (result.status === 'en_attente_admin') {
+        return res.status(200).json({
+          success: true,
+          status: 'en_attente_admin',
+          message: result.message,
+          skipVeriff: true
+        });
+      }
+
+      return res.status(400).json({
+        success: false,
+        status: 'refuse',
+        message: result.message,
+        documents_invalides: result.documents_invalides,
+        skipVeriff: true
+      });
     }
 
-    // Save Veriff Session ID in documents table (under onfido_check_id)
+    const veriffApiKey = process.env.VERIFF_API_KEY;
+    const veriffBaseUrl = process.env.VERIFF_BASE_URL || 'https://stationapi.veriff.com';
+    const backendBaseUrl = getBackendBaseUrl(req);
+    const callbackUrl = `${backendBaseUrl}/veriff-callback`;
+    let veriffSessionId = '';
+    let veriffWebViewUrl = '';
+    let useNativeVerification = shouldUseNativeVeriff(backendBaseUrl);
+
+    if (useNativeVerification) {
+      veriffSessionId = `mock_session_${uuidv4()}`;
+      console.log(`Using native identity verification (session ${veriffSessionId})`);
+    } else {
+      try {
+        console.log('Creating Veriff Session...');
+        const veriffRes = await axios.post(
+          `${veriffBaseUrl}/v1/sessions`,
+          {
+            verification: {
+              callback: callbackUrl,
+              person: {
+                firstName: user.prenom,
+                lastName: user.nom
+              },
+              document: {
+                type: 'ID_CARD',
+                country: 'QA'
+              },
+              vendorData: userId.toString()
+            }
+          },
+          {
+            headers: {
+              'X-AUTH-CLIENT': veriffApiKey,
+              'Content-Type': 'application/json'
+            }
+          }
+        );
+
+        if (veriffRes.data && veriffRes.data.status === 'success') {
+          veriffSessionId = veriffRes.data.verification.id;
+          veriffWebViewUrl = veriffRes.data.verification.url;
+          if (isBrokenTunnelUrl(veriffWebViewUrl)) {
+            console.warn('Veriff URL points to unavailable tunnel, falling back to native verification');
+            useNativeVerification = true;
+            veriffSessionId = `mock_session_${uuidv4()}`;
+            veriffWebViewUrl = '';
+          } else {
+            console.log(`Veriff session created successfully: ${veriffSessionId}`);
+          }
+        } else {
+          throw new Error('Veriff API did not return success status');
+        }
+      } catch (veriffErr) {
+        console.error('Veriff API call failed, using native verification:', veriffErr.message);
+        useNativeVerification = true;
+        veriffSessionId = `mock_session_${uuidv4()}`;
+        veriffWebViewUrl = '';
+      }
+    }
+
     await db.query(
       'UPDATE documents SET onfido_check_id = ? WHERE user_id = ?',
       [veriffSessionId, userId]
     );
 
-    // Return the WebView URL to Flutter
     res.status(200).json({
       success: true,
-      verificationUrl: veriffWebViewUrl,
+      verificationUrl: useNativeVerification ? null : veriffWebViewUrl,
       sessionId: veriffSessionId,
-      message: 'Session de vérification créée. Ouvrez le lien pour compléter la vérification.'
+      useNativeVerification,
+      message: 'Vos documents sont en cours de vérification',
+      skipVeriff: false
     });
 
   } catch (error) {
     console.error('Error in verify:', error);
-    res.status(500).json({ message: error.message });
+    res.status(500).json({ message: USER_ERROR });
+  }
+};
+
+// ═══════════════════════════════════════════════════════════════
+// POST /pro/complete-native-veriff — Fin vérification caméra native (dev)
+// ═══════════════════════════════════════════════════════════════
+exports.completeNativeVeriff = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { sessionId, status } = req.body;
+
+    if (!sessionId) {
+      return res.status(400).json({ message: 'Session de vérification introuvable.' });
+    }
+
+    const [documents] = await db.query(
+      'SELECT user_id, qr_code_valide, raison_refus FROM documents WHERE onfido_check_id = ? AND user_id = ?',
+      [sessionId, userId]
+    );
+
+    if (documents.length === 0) {
+      console.error(`Native veriff: session ${sessionId} not found for user ${userId}`);
+      return res.status(400).json({ message: 'Session de vérification expirée. Veuillez resoumettre.' });
+    }
+
+    const doc = documents[0];
+    const veriffStatus = status === 'declined' ? 'declined' : 'approved';
+
+    if (veriffStatus === 'approved') {
+      console.log(`Native veriff approved QID for User ${userId}`);
+      await db.query('UPDATE documents SET qid_verifie = TRUE WHERE user_id = ?', [userId]);
+      const result = await finalizeAttestationAfterQid(userId, doc, { prenom: '', nom: '' });
+      return res.status(200).json({
+        success: true,
+        status: result.status,
+        message: result.message || buildStatusMessage(result.status)
+      });
+    }
+
+    await db.query('UPDATE documents SET qid_verifie = FALSE WHERE user_id = ?', [userId]);
+    const invalidDocs = await rejectVerification(userId, 'QID invalide', ['qid']);
+    return res.status(200).json({
+      success: true,
+      status: 'refuse',
+      message: buildStatusMessage('refuse', invalidDocs),
+      documents_invalides: invalidDocs
+    });
+  } catch (error) {
+    console.error('Error in completeNativeVeriff:', error);
+    res.status(500).json({ message: USER_ERROR });
   }
 };
 
@@ -421,15 +753,13 @@ exports.veriffCallback = async (req, res) => {
     const payload = req.body;
     console.log('Received Veriff Callback Webhook:', JSON.stringify(payload));
 
-    // Support both sandbox and direct Veriff structures
     const sessionId = payload.id || (payload.verification && payload.verification.id);
     const veriffStatus = payload.status || (payload.verification && payload.verification.status);
-    
+
     if (!sessionId) {
       return res.status(400).json({ message: 'ID de session manquant dans le payload.' });
     }
 
-    // Find the user documents using the Veriff Session ID (onfido_check_id)
     const [documents] = await db.query(
       'SELECT user_id, qr_code_valide, raison_refus FROM documents WHERE onfido_check_id = ?',
       [sessionId]
@@ -443,70 +773,29 @@ exports.veriffCallback = async (req, res) => {
     const doc = documents[0];
     const userId = doc.user_id;
 
-    // Veriff approved ✅
     if (veriffStatus === 'approved' || veriffStatus === 'success') {
       console.log(`Veriff approved QID for User ${userId}. Checking QR Code...`);
-      
-      if (doc.qr_code_valide === 1) {
-        // Everything is valid!
-        await db.query(
-          `UPDATE prestataires SET
-            statut_verification = 'valide',
-            badge_verifie = TRUE,
-            raison_refus = NULL,
-            verifie_le = NOW()
-           WHERE user_id = ?`,
-          [userId]
-        );
-        // Also update role of user to pro in users table
-        await db.query("UPDATE users SET statut = 'actif' WHERE id = ?", [userId]);
-        await sendNotification(userId, 'Compte Pro activé ⭐');
-        
-      } else if (doc.raison_refus === 'Pas de QR Code') {
-        // No QR code -> goes to admin manual check
-        await db.query(
-          `UPDATE prestataires SET
-            statut_verification = 'en_attente_admin',
-            raison_refus = 'Pas de QR Code sur l attestation',
-            verifie_le = NOW()
-           WHERE user_id = ?`,
-          [userId]
-        );
-        console.log(`User ${userId} has no QR Code. Status set to en_attente_admin.`);
-        
-      } else {
-        // QR Code invalid -> rejected
-        await db.query(
-          `UPDATE prestataires SET
-            statut_verification = 'refuse',
-            raison_refus = 'Attestation invalide',
-            verifie_le = NOW()
-           WHERE user_id = ?`,
-          [userId]
-        );
-        await sendNotification(userId, 'Document refusé');
-        console.log(`User ${userId} has an invalid QR Code. Status set to refuse.`);
-      }
-      
-    } else {
-      // Veriff declined ❌
-      console.log(`Veriff declined verification for User ${userId}. Reason: ${payload.reason || 'QID invalide'}`);
+
       await db.query(
-        `UPDATE prestataires SET
-          statut_verification = 'refuse',
-          raison_refus = 'QID invalide',
-          verifie_le = NOW()
-         WHERE user_id = ?`,
+        'UPDATE documents SET qid_verifie = TRUE WHERE user_id = ?',
         [userId]
       );
-      await sendNotification(userId, 'Document refusé');
+
+      await finalizeAttestationAfterQid(userId, doc, { prenom: '', nom: '' });
+    } else {
+      console.log(`Veriff declined verification for User ${userId}. Reason: ${payload.reason || 'QID invalide'}`);
+      await db.query(
+        'UPDATE documents SET qid_verifie = FALSE WHERE user_id = ?',
+        [userId]
+      );
+      await rejectVerification(userId, 'QID invalide', ['qid']);
     }
 
     res.status(200).json({ success: true, message: 'Callback traité avec succès.' });
 
   } catch (error) {
     console.error('Error in veriffCallback:', error);
-    res.status(500).json({ message: error.message });
+    res.status(500).json({ message: USER_ERROR });
   }
 };
 
@@ -516,32 +805,148 @@ exports.veriffCallback = async (req, res) => {
 exports.getStatus = async (req, res) => {
   try {
     const userId = req.user.id;
-    
+
     const [prestataires] = await db.query(
-      'SELECT statut_verification, badge_verifie, raison_refus, verifie_le FROM prestataires WHERE user_id = ?',
+      'SELECT statut_verification, badge_verifie, raison_refus, documents_invalides, verifie_le FROM prestataires WHERE user_id = ?',
       [userId]
     );
+
+    const [documents] = await db.query(
+      'SELECT qid_verifie, qr_code_valide, raison_refus FROM documents WHERE user_id = ?',
+      [userId]
+    );
+    const doc = documents[0] || null;
 
     if (prestataires.length === 0) {
       return res.status(200).json({
         success: true,
         statut_verification: 'non_demande',
         badge_verifie: false,
-        raison_refus: null
+        raison_refus: null,
+        documents_invalides: [],
+        documents_status: null,
+        message: null
       });
     }
 
+    const prestataire = prestataires[0];
+    const documentsInvalides = parseDocumentsInvalides(prestataire.documents_invalides);
+    const statut = prestataire.statut_verification;
+    const documentsStatus = buildDocumentsStatus(statut, doc, documentsInvalides);
+
     res.status(200).json({
       success: true,
-      statut_verification: prestataires[0].statut_verification,
-      badge_verifie: prestataires[0].badge_verifie === 1,
-      raison_refus: prestataires[0].raison_refus,
-      verifie_le: prestataires[0].verifie_le
+      statut_verification: statut,
+      badge_verifie: prestataire.badge_verifie === 1,
+      raison_refus: prestataire.raison_refus,
+      documents_invalides: documentsInvalides,
+      documents_status: documentsStatus,
+      verifie_le: prestataire.verifie_le,
+      message: buildStatusMessage(statut, documentsInvalides),
+      resubmit_hint: statut === 'refuse' || documentsStatus.qid.can_replace || documentsStatus.attestation.can_replace
+        ? 'Veuillez corriger uniquement les documents invalides et resoumettre.'
+        : null
     });
 
   } catch (error) {
     console.error('Error in getStatus:', error);
-    res.status(500).json({ message: error.message });
+    res.status(500).json({ message: USER_ERROR });
+  }
+};
+
+// ═══════════════════════════════════════════════════════════════
+// POST /pro/admin/approve/:userId — Vérification manuelle admin
+// ═══════════════════════════════════════════════════════════════
+exports.adminApprove = async (req, res) => {
+  try {
+    const adminSecret = req.headers['x-admin-secret'];
+    if (!process.env.ADMIN_SECRET || adminSecret !== process.env.ADMIN_SECRET) {
+      return res.status(403).json({ message: 'Accès refusé.' });
+    }
+
+    const userId = req.params.userId;
+    const [prestataires] = await db.query(
+      'SELECT statut_verification FROM prestataires WHERE user_id = ?',
+      [userId]
+    );
+
+    if (prestataires.length === 0 || prestataires[0].statut_verification !== 'en_attente_admin') {
+      return res.status(400).json({ message: 'Aucune demande en attente de vérification manuelle.' });
+    }
+
+    await activateProAccount(userId);
+    console.log(`Admin approved manual verification for user ${userId}`);
+
+    res.status(200).json({
+      success: true,
+      message: 'Compte professionnel activé.',
+      statut_verification: 'valide'
+    });
+  } catch (error) {
+    console.error('Error in adminApprove:', error);
+    res.status(500).json({ message: USER_ERROR });
+  }
+};
+
+// ═══════════════════════════════════════════════════════════════
+// POST /pro/admin/reject/:userId — Rejet manuel admin
+// ═══════════════════════════════════════════════════════════════
+exports.adminReject = async (req, res) => {
+  try {
+    const adminSecret = req.headers['x-admin-secret'];
+    if (!process.env.ADMIN_SECRET || adminSecret !== process.env.ADMIN_SECRET) {
+      return res.status(403).json({ message: 'Accès refusé.' });
+    }
+
+    const userId = req.params.userId;
+    const [prestataires] = await db.query(
+      'SELECT statut_verification FROM prestataires WHERE user_id = ?',
+      [userId]
+    );
+
+    if (prestataires.length === 0 || prestataires[0].statut_verification !== 'en_attente_admin') {
+      return res.status(400).json({ message: 'Aucune demande en attente de vérification manuelle.' });
+    }
+
+    const invalidDocs = await rejectVerification(userId, 'Attestation invalide', ['attestation']);
+    console.log(`Admin rejected manual verification for user ${userId}`);
+
+    res.status(200).json({
+      success: true,
+      message: buildStatusMessage('refuse', invalidDocs),
+      statut_verification: 'refuse',
+      documents_invalides: invalidDocs
+    });
+  } catch (error) {
+    console.error('Error in adminReject:', error);
+    res.status(500).json({ message: USER_ERROR });
+  }
+};
+
+// ═══════════════════════════════════════════════════════════════
+// GET /pro/admin/pending — Liste des dossiers en attente admin
+// ═══════════════════════════════════════════════════════════════
+exports.adminListPending = async (req, res) => {
+  try {
+    const adminSecret = req.headers['x-admin-secret'];
+    if (!process.env.ADMIN_SECRET || adminSecret !== process.env.ADMIN_SECRET) {
+      return res.status(403).json({ message: 'Accès refusé.' });
+    }
+
+    const [rows] = await db.query(
+      `SELECT p.user_id, u.prenom, u.nom, u.email, d.qid_num, d.attestation,
+              p.statut_verification, p.raison_refus, p.verifie_le
+       FROM prestataires p
+       JOIN users u ON u.id = p.user_id
+       JOIN documents d ON d.user_id = p.user_id
+       WHERE p.statut_verification = 'en_attente_admin'
+       ORDER BY p.verifie_le ASC`
+    );
+
+    res.status(200).json({ success: true, pending: rows });
+  } catch (error) {
+    console.error('Error in adminListPending:', error);
+    res.status(500).json({ message: USER_ERROR });
   }
 };
 
@@ -550,7 +955,8 @@ exports.getStatus = async (req, res) => {
 // ═══════════════════════════════════════════════════════════════
 exports.renderMockVeriff = async (req, res) => {
   const { session_id, user_id } = req.query;
-  
+  const backendBaseUrl = getBackendBaseUrl(req);
+
   res.send(`
     <!DOCTYPE html>
     <html lang="fr">
@@ -629,12 +1035,27 @@ exports.renderMockVeriff = async (req, res) => {
           color: #6b7a99;
           margin-top: 20px;
         }
+        #cameraPreview {
+          width: 100%;
+          max-height: 220px;
+          border-radius: 12px;
+          margin-bottom: 16px;
+          background: #0d1f3c;
+          object-fit: cover;
+        }
+        .camera-hint {
+          font-size: 12px;
+          color: #c9a84c;
+          margin-bottom: 16px;
+        }
       </style>
     </head>
     <body>
       <div class="card">
-        <h1>🔍 Veriff Identity Verification</h1>
-        <p>Simulation du processus de capture d'identité (Recto/Verso) pour le compte Qatar Services.<br>Sélectionnez le résultat de l'analyse ci-dessous.</p>
+        <h1>🔍 Vérification d'identité</h1>
+        <p>Mode simulation — autorisez la caméra pour scanner votre QID, puis validez le résultat.</p>
+        <video id="cameraPreview" autoplay playsinline muted></video>
+        <p id="cameraStatus" class="camera-hint">Activation de la caméra...</p>
         
         <button class="btn btn-success" onclick="sendResult('approved')">✅ Valider l'identité (Approved)</button>
         <button class="btn btn-danger" onclick="sendResult('declined')">❌ Refuser l'identité (Declined)</button>
@@ -646,8 +1067,26 @@ exports.renderMockVeriff = async (req, res) => {
       </div>
 
       <script>
+        async function startCamera() {
+          const video = document.getElementById('cameraPreview');
+          const status = document.getElementById('cameraStatus');
+          try {
+            const stream = await navigator.mediaDevices.getUserMedia({
+              video: { facingMode: { ideal: 'environment' } },
+              audio: false
+            });
+            video.srcObject = stream;
+            status.textContent = 'Caméra active — placez votre QID devant l\\'objectif';
+          } catch (err) {
+            console.error('Camera error:', err);
+            status.textContent = 'Caméra indisponible. Autorisez l\\'accès caméra dans les paramètres.';
+          }
+        }
+
+        startCamera();
+
         function sendResult(status) {
-          fetch('/veriff-callback', {
+          fetch('${backendBaseUrl}/veriff-callback', {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json'
