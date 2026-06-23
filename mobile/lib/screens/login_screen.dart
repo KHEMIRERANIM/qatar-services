@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import '../services/auth_service.dart';
 import '../services/token_service.dart';
-
+import 'package:google_sign_in/google_sign_in.dart';
 class LoginScreen extends StatefulWidget {
   final VoidCallback onSuccess;
   final VoidCallback onRegister;
@@ -297,44 +297,52 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 
   // ─── GOOGLE SIGN IN (via Firebase popup — web compatible) ───────────────
-  Future<void> _signInWithGoogle() async {
-    setState(() { _isLoading = true; _globalError = null; });
-    try {
-      final provider = GoogleAuthProvider()
-        ..addScope('email')
-        ..addScope('profile');
-      final fbResult = await FirebaseAuth.instance.signInWithPopup(provider);
-      final user = fbResult.user;
-      if (user == null) throw Exception('Utilisateur introuvable');
-
-      final parts = (user.displayName ?? '').split(' ');
-      final prenom = parts.isNotEmpty ? parts[0] : '';
-      final nom = parts.length > 1 ? parts.sublist(1).join(' ') : '';
-
-      final backendResult = await AuthService.socialLogin(
-        email: user.email ?? '',
-        prenom: prenom,
-        nom: nom,
-        photo: user.photoURL,
-        uid: user.uid,
-      );
-
-      if (!mounted) return;
-      if (backendResult.success) {
-        _showSnack('Connexion Google réussie !', success: true);
-        widget.onSuccess();
-      } else {
-        setState(() => _globalError = 'Erreur serveur: ${backendResult.message}');
-      }
-    } on FirebaseAuthException catch (e) {
-      if (mounted) setState(() => _globalError = _mapFirebaseError(e.code));
-    } catch (e) {
-      if (mounted) setState(() => _globalError = 'Connexion Google annulée ou échouée.');
-    } finally {
-      if (mounted) setState(() => _isLoading = false);
+Future<void> _signInWithGoogle() async {
+  setState(() { _isLoading = true; _globalError = null; });
+  try {
+    final googleSignIn = GoogleSignIn();
+    await googleSignIn.signOut(); // Force l'affichage du sélecteur de compte
+    final googleUser = await googleSignIn.signIn();
+    if (googleUser == null) {
+      setState(() => _isLoading = false);
+      return;
     }
-  }
+    final googleAuth = await googleUser.authentication;
+    final credential = GoogleAuthProvider.credential(
+      idToken: googleAuth.idToken,
+      accessToken: googleAuth.accessToken,
+    );
+    final fbResult = await FirebaseAuth.instance.signInWithCredential(credential);
+    final user = fbResult.user;
+    if (user == null) throw Exception('Utilisateur introuvable');
 
+    final parts = (user.displayName ?? '').split(' ');
+    final prenom = parts.isNotEmpty ? parts[0] : '';
+    final nom = parts.length > 1 ? parts.sublist(1).join(' ') : '';
+
+    final backendResult = await AuthService.socialLogin(
+      email: user.email ?? '',
+      prenom: prenom,
+      nom: nom,
+      photo: user.photoURL,
+      uid: user.uid,
+    );
+
+    if (!mounted) return;
+    if (backendResult.success) {
+      _showSnack('Connexion Google réussie !', success: true);
+      widget.onSuccess();
+    } else {
+      setState(() => _globalError = backendResult.message);
+    }
+  } on FirebaseAuthException catch (e) {
+    if (mounted) setState(() => _globalError = _mapFirebaseError(e.code));
+  } catch (e) {
+    if (mounted) setState(() => _globalError = 'Connexion Google annulée.');
+  } finally {
+    if (mounted) setState(() => _isLoading = false);
+  }
+}
   // ─── APPLE SIGN IN ───────────────────────────────────────────────────────
   Future<void> _signInWithApple() async {
     setState(() { _isLoading = true; _globalError = null; });
