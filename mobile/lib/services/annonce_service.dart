@@ -84,6 +84,7 @@ class AnnonceService {
     String? ville,
     List<String>? photos,
     String? typePaiement,
+    bool urgent = false,
   }) async {
     try {
       final headers = await _authHeaders();
@@ -95,6 +96,7 @@ class AnnonceService {
         if (ville != null && ville.isNotEmpty) 'ville': ville,
         if (photos != null && photos.isNotEmpty) 'photos': photos,
         if (typePaiement != null) 'type_paiement': typePaiement,
+        'urgent': urgent,
       };
       final response = await http
           .post(Uri.parse('$baseUrl/api/annonces'),
@@ -129,6 +131,24 @@ class AnnonceService {
       return AnnonceResult(success: false, message: 'Délai dépassé lors de l\'upload.');
     } catch (e) {
       return AnnonceResult(success: false, message: 'Erreur lors de l\'upload.');
+    }
+  }
+
+  // DELETE /api/annonces/:id/photos/:pid
+  static Future<AnnonceResult> deletePhoto(int annonceId, int photoId) async {
+    try {
+      final headers = await _authHeaders();
+      final response = await http
+          .delete(Uri.parse('$baseUrl/api/annonces/$annonceId/photos/$photoId'),
+              headers: headers)
+          .timeout(_timeout);
+      final data = jsonDecode(response.body);
+      if (response.statusCode == 200) return AnnonceResult(success: true);
+      return AnnonceResult(success: false, message: data['message'] ?? 'Erreur suppression photo');
+    } on TimeoutException {
+      return AnnonceResult(success: false, message: 'Délai dépassé.');
+    } catch (e) {
+      return AnnonceResult(success: false, message: 'Erreur réseau.');
     }
   }
 

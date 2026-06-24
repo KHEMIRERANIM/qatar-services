@@ -86,7 +86,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
         if (_phone.isEmpty && user.phoneNumber != null && user.phoneNumber!.isNotEmpty) {
           _phone = user.phoneNumber!;
         }
-        if (user.photoURL != null && user.photoURL!.isNotEmpty) {
+        // ✅ N'utilise la photo Google QUE si pas de photo dans la DB
+        if (_imageUrl.isEmpty && user.photoURL != null && user.photoURL!.isNotEmpty) {
           _imageUrl = user.photoURL!;
         }
       });

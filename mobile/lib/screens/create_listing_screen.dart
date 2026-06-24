@@ -123,6 +123,8 @@ class _CreateListingScreenState extends State<CreateListingScreen> {
       categorie: _selectedCategory,
       prix: prix,
       ville: _locationController.text.trim().isEmpty ? null : _locationController.text.trim(),
+      typePaiement: _selectedPricingType,
+      urgent: _urgent,
     );
 
     if (!mounted) return;
@@ -163,6 +165,16 @@ class _CreateListingScreenState extends State<CreateListingScreen> {
   }
 
   void _addPhoto() {
+    if (_photos.length >= 2) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text("Maximum 2 photos par annonce."),
+          backgroundColor: Color(0xFFEF4444),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+      return;
+    }
     showModalBottomSheet(
       context: context,
       backgroundColor: Colors.white,
@@ -349,7 +361,7 @@ class _CreateListingScreenState extends State<CreateListingScreen> {
                     Row(
                       children: [
                         // Ajouter photo button (displays if user has selected less than 3 photos)
-                        if (_photos.length < 3)
+                        if (_photos.length < 2)
                           InkWell(
                             onTap: _addPhoto,
                             borderRadius: BorderRadius.circular(16),
@@ -423,7 +435,7 @@ class _CreateListingScreenState extends State<CreateListingScreen> {
                         }).toList(),
 
                         // Placeholders to fill the row to 3 items
-                        for (int i = 0; i < (3 - _photos.length - (_photos.length < 3 ? 1 : 0)); i++)
+                        for (int i = 0; i < (2 - _photos.length - (_photos.length < 2 ? 1 : 0)); i++)
                           Padding(
                             padding: const EdgeInsets.only(left: 12),
                             child: Container(

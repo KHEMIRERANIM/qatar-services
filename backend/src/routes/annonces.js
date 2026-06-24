@@ -17,7 +17,17 @@ router.get('/alter-db', async (req, res) => {
       if (e.code !== 'ER_DUP_FIELDNAME') throw e;
     }
     try {
-      await db.query(`ALTER TABLE annonces ADD COLUMN type_paiement VARCHAR(100) DEFAULT 'Espèces'`);
+      await db.query(`ALTER TABLE annonces ADD COLUMN type_paiement VARCHAR(100) DEFAULT 'hourly'`);
+    } catch (e) {
+      if (e.code !== 'ER_DUP_FIELDNAME') throw e;
+    }
+    try {
+      await db.query(`ALTER TABLE annonces ADD COLUMN urgent TINYINT(1) DEFAULT 0`);
+    } catch (e) {
+      if (e.code !== 'ER_DUP_FIELDNAME') throw e;
+    }
+    try {
+      await db.query(`ALTER TABLE annonces ADD COLUMN urgent_until DATETIME NULL`);
     } catch (e) {
       if (e.code !== 'ER_DUP_FIELDNAME') throw e;
     }
@@ -37,6 +47,7 @@ router.delete('/:id', authMiddleware, annoncesController.deleteAnnonce);
 
 // Upload photo Cloudinary
 router.post('/:id/photos', authMiddleware, annoncesController.uploadPhoto);
+router.delete('/:id/photos/:pid', authMiddleware, annoncesController.deletePhoto);
 
 // Actions (Likes et Commentaires)
 router.post('/:id/like', authMiddleware, annoncesController.toggleLike);

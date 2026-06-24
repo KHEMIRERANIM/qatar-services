@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'dart:io';
+import 'package:image_picker/image_picker.dart';
 import 'profile_screen.dart';
 import 'create_listing_screen.dart';
 import '../services/annonce_service.dart';
@@ -118,6 +120,110 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
+  String _normalizePricingType(Map<String, dynamic> a) {
+    final type = a['type_paiement']?.toString() ?? '';
+    if (['hourly', 'fixed', 'quote'].contains(type)) return type;
+    return a['prix'] == null ? 'quote' : 'fixed';
+  }
+
+  String _formatPrixLabel(Map<String, dynamic> a) {
+    final type = _normalizePricingType(a);
+    if (type == 'quote') return 'Sur devis';
+    final prixVal = a['prix'] != null ? double.tryParse(a['prix'].toString()) : null;
+    if (prixVal == null) return 'Sur devis';
+    if (type == 'hourly') return '${prixVal.toStringAsFixed(0)} QAR/heure';
+    return '${prixVal.toStringAsFixed(0)} QAR';
+  }
+
+  bool _isUrgentActive(Map<String, dynamic> a) {
+    if (a['urgent'] != 1 && a['urgent'] != true) return false;
+    final until = a['urgent_until'];
+    if (until == null) return true;
+    try {
+      return DateTime.parse(until.toString()).isAfter(DateTime.now());
+    } catch (_) {
+      return true;
+    }
+  }
+
+  Widget _buildPhotoCarousel({
+    required List<String> urls,
+    required String emoji,
+    required int currentIndex,
+    required ValueChanged<int> onIndexChanged,
+    double height = 180,
+  }) {
+    if (urls.isEmpty) {
+      return Container(
+        height: 90,
+        decoration: BoxDecoration(color: const Color(0xFFF5F7FA), borderRadius: BorderRadius.circular(16)),
+        alignment: Alignment.center,
+        child: Text(emoji, style: const TextStyle(fontSize: 50)),
+      );
+    }
+
+    final idx = currentIndex.clamp(0, urls.length - 1);
+    return Stack(
+      alignment: Alignment.center,
+      children: [
+        ClipRRect(
+          borderRadius: BorderRadius.circular(16),
+          child: Image.network(
+            urls[idx],
+            height: height,
+            width: double.infinity,
+            fit: BoxFit.cover,
+            errorBuilder: (_, __, ___) => Container(
+              height: height,
+              color: const Color(0xFFF5F7FA),
+              alignment: Alignment.center,
+              child: Text(emoji, style: const TextStyle(fontSize: 50)),
+            ),
+          ),
+        ),
+        if (urls.length > 1) ...[
+          Positioned(
+            left: 8,
+            child: IconButton(
+              onPressed: idx > 0 ? () => onIndexChanged(idx - 1) : null,
+              icon: const Icon(Icons.chevron_left, color: Colors.white),
+              style: IconButton.styleFrom(backgroundColor: Colors.black45),
+            ),
+          ),
+          Positioned(
+            right: 8,
+            child: IconButton(
+              onPressed: idx < urls.length - 1 ? () => onIndexChanged(idx + 1) : null,
+              icon: const Icon(Icons.chevron_right, color: Colors.white),
+              style: IconButton.styleFrom(backgroundColor: Colors.black45),
+            ),
+          ),
+          Positioned(
+            bottom: 8,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+              decoration: BoxDecoration(color: Colors.black45, borderRadius: BorderRadius.circular(12)),
+              child: Text('${idx + 1}/${urls.length}',
+                  style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w600)),
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+
+  Widget _buildUrgentBadge() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: const Color(0xFFEF4444),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: const Text('URGENT',
+          style: TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold)),
+    );
+  }
+
   void _showLikesList(List<Map<String, dynamic>> likes) {
     showModalBottomSheet(
       context: context,
@@ -225,13 +331,65 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   // ─────────────────── EDIT MODAL ────────────────────────────
-  void _showEditModal(Map<String, dynamic> annonce) {
+  Future<void> _showEditModal(Map<String, dynamic> annonce) async {
+    final annonceId = int.tryParse(annonce['id'].toString()) ?? 0;
+    if (annonceId == 0) return;
+
     final titreCtrl = TextEditingController(text: annonce['titre'] ?? '');
     final descCtrl = TextEditingController(text: annonce['description'] ?? '');
     final prixCtrl = TextEditingController(
         text: annonce['prix'] != null ? annonce['prix'].toString() : '');
     final villeCtrl = TextEditingController(text: annonce['ville'] ?? '');
+
+    String selectedPricingType = _normalizePricingType(annonce);
+    bool urgent = _isUrgentActive(annonce);
+    List<Map<String, dynamic>> existingPhotos = [];
+
+    final detailRes = await AnnonceService.getDetail(annonceId);
+    if (detailRes.success && detailRes.data != null) {
+      final det = detailRes.data as Map<String, dynamic>;
+      existingPhotos = List<Map<String, dynamic>>.from(det['photos'] ?? []);
+      selectedPricingType = _normalizePricingType(det);
+      urgent = _isUrgentActive(det);
+      if (det['prix'] != null) {
+        prixCtrl.text = det['prix'].toString();
+      }
+    }
+
+    if (!mounted) return;
+
     bool saving = false;
+
+    Future<void> pickAndUploadPhoto(void Function(void Function()) setSheet) async {
+      if (existingPhotos.length >= 2) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('Maximum 2 photos par annonce.'),
+          behavior: SnackBarBehavior.floating,
+          backgroundColor: Color(0xFFEF4444),
+        ));
+        return;
+      }
+      final picker = ImagePicker();
+      final picked = await picker.pickImage(source: ImageSource.gallery, imageQuality: 85);
+      if (picked == null) return;
+      final uploadRes = await AnnonceService.uploadPhoto(annonceId, File(picked.path));
+      if (!mounted) return;
+      if (uploadRes.success) {
+        final refresh = await AnnonceService.getDetail(annonceId);
+        if (refresh.success && refresh.data != null) {
+          setSheet(() {
+            existingPhotos = List<Map<String, dynamic>>.from(
+                (refresh.data as Map<String, dynamic>)['photos'] ?? []);
+          });
+        }
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(uploadRes.message ?? 'Erreur upload photo'),
+          behavior: SnackBarBehavior.floating,
+          backgroundColor: const Color(0xFFEF4444),
+        ));
+      }
+    }
 
     showModalBottomSheet(
       context: context,
@@ -245,64 +403,190 @@ class _HomeScreenState extends State<HomeScreen> {
             bottom: MediaQuery.of(ctx).viewInsets.bottom + 24,
             left: 24, right: 24, top: 24,
           ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  const Text('Modifier l\'offre',
-                      style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Color(0xFF0D1F3C))),
-                  IconButton(onPressed: () => Navigator.pop(ctx), icon: const Icon(Icons.close, color: Color(0xFF6B7A99))),
-                ],
-              ),
-              const SizedBox(height: 14),
-              _editField('Titre', titreCtrl),
-              const SizedBox(height: 10),
-              _editField('Description', descCtrl, maxLines: 3),
-              const SizedBox(height: 10),
-              _editField('Prix (QAR)', prixCtrl, keyboardType: TextInputType.number),
-              const SizedBox(height: 10),
-              _editField('Ville', villeCtrl),
-              const SizedBox(height: 20),
-              ElevatedButton(
-                onPressed: saving ? null : () async {
-                  setSheet(() => saving = true);
-                  final res = await AnnonceService.updateAnnonce(annonce['id'], {
-                    if (titreCtrl.text.trim().isNotEmpty) 'titre': titreCtrl.text.trim(),
-                    if (descCtrl.text.trim().isNotEmpty) 'description': descCtrl.text.trim(),
-                    'prix': double.tryParse(prixCtrl.text),
-                    if (villeCtrl.text.trim().isNotEmpty) 'ville': villeCtrl.text.trim(),
-                  });
-                  setSheet(() => saving = false);
-                  if (!mounted) return;
-                  Navigator.pop(ctx);
-                  if (res.success) {
-                    _loadFeed(reset: true);
-                    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-                      content: Text('Offre modifiée avec succès'),
-                      backgroundColor: Color(0xFF2D9B6F),
-                      behavior: SnackBarBehavior.floating,
-                    ));
-                  } else {
-                    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-                      content: Text(res.message ?? 'Erreur'),
-                      backgroundColor: const Color(0xFFEF4444),
-                      behavior: SnackBarBehavior.floating,
-                    ));
-                  }
-                },
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFF0D1F3C),
-                  padding: const EdgeInsets.symmetric(vertical: 16),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+          child: SingleChildScrollView(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    const Text('Modifier l\'offre',
+                        style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Color(0xFF0D1F3C))),
+                    IconButton(onPressed: () => Navigator.pop(ctx), icon: const Icon(Icons.close, color: Color(0xFF6B7A99))),
+                  ],
                 ),
-                child: saving
-                    ? const SizedBox(height: 18, width: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                    : const Text('Enregistrer', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-              ),
-            ],
+                const SizedBox(height: 14),
+                const Text('Photos', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Color(0xFF0D1F3C))),
+                const SizedBox(height: 8),
+                Row(
+                  children: [
+                    if (existingPhotos.length < 2)
+                      InkWell(
+                        onTap: () => pickAndUploadPhoto(setSheet),
+                        borderRadius: BorderRadius.circular(12),
+                        child: Container(
+                          width: 72,
+                          height: 72,
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFC9A84C).withOpacity(0.05),
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(color: const Color(0xFFC9A84C).withOpacity(0.5), width: 2),
+                          ),
+                          child: const Icon(Icons.add_a_photo_outlined, color: Color(0xFFC9A84C), size: 22),
+                        ),
+                      ),
+                    ...existingPhotos.map((p) {
+                      final photoId = int.tryParse(p['id'].toString()) ?? 0;
+                      return Padding(
+                        padding: const EdgeInsets.only(left: 10),
+                        child: Stack(
+                          clipBehavior: Clip.none,
+                          children: [
+                            ClipRRect(
+                              borderRadius: BorderRadius.circular(12),
+                              child: Image.network(p['url'], width: 72, height: 72, fit: BoxFit.cover),
+                            ),
+                            Positioned(
+                              right: -6,
+                              top: -6,
+                              child: GestureDetector(
+                                onTap: () async {
+                                  if (photoId == 0) return;
+                                  final delRes = await AnnonceService.deletePhoto(annonceId, photoId);
+                                  if (!mounted) return;
+                                  if (delRes.success) {
+                                    setSheet(() => existingPhotos.removeWhere((e) => e['id'] == p['id']));
+                                  }
+                                },
+                                child: Container(
+                                  padding: const EdgeInsets.all(2),
+                                  decoration: const BoxDecoration(color: Color(0xFFEF4444), shape: BoxShape.circle),
+                                  child: const Icon(Icons.close, color: Colors.white, size: 12),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      );
+                    }),
+                  ],
+                ),
+                const SizedBox(height: 14),
+                _editField('Titre', titreCtrl),
+                const SizedBox(height: 10),
+                _editField('Description', descCtrl, maxLines: 3),
+                const SizedBox(height: 10),
+                const Text('Type de tarification',
+                    style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Color(0xFF0D1F3C))),
+                const SizedBox(height: 6),
+                Row(
+                  children: pricingTypes.map((pt) {
+                    final isSelected = selectedPricingType == pt.id;
+                    return Expanded(
+                      child: Padding(
+                        padding: EdgeInsets.only(right: pt.id != 'quote' ? 6.0 : 0.0),
+                        child: InkWell(
+                          onTap: () => setSheet(() => selectedPricingType = pt.id),
+                          borderRadius: BorderRadius.circular(10),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(vertical: 8),
+                            decoration: BoxDecoration(
+                              color: isSelected ? const Color(0xFFFFFBEB) : const Color(0xFFF5F7FA),
+                              borderRadius: BorderRadius.circular(10),
+                              border: Border.all(
+                                color: isSelected ? const Color(0xFFC9A84C) : const Color(0xFFE8EDF5),
+                              ),
+                            ),
+                            child: Text(pt.label,
+                                textAlign: TextAlign.center,
+                                style: TextStyle(
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.bold,
+                                  color: isSelected ? const Color(0xFFC9A84C) : const Color(0xFF6B7A99),
+                                )),
+                          ),
+                        ),
+                      ),
+                    );
+                  }).toList(),
+                ),
+                if (selectedPricingType != 'quote') ...[
+                  const SizedBox(height: 10),
+                  _editField('Prix (QAR)', prixCtrl, keyboardType: TextInputType.number),
+                ],
+                const SizedBox(height: 10),
+                _editField('Ville', villeCtrl),
+                const SizedBox(height: 12),
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFF5F7FA),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text('Annonce urgente',
+                              style: TextStyle(fontWeight: FontWeight.bold, color: Color(0xFF0D1F3C), fontSize: 13)),
+                          Text('Mise en avant 3 jours',
+                              style: TextStyle(color: Color(0xFF6B7A99), fontSize: 11)),
+                        ],
+                      ),
+                      Switch(
+                        value: urgent,
+                        activeColor: const Color(0xFFC9A84C),
+                        onChanged: (v) => setSheet(() => urgent = v),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 20),
+                ElevatedButton(
+                  onPressed: saving ? null : () async {
+                    setSheet(() => saving = true);
+                    final fields = <String, dynamic>{
+                      if (titreCtrl.text.trim().isNotEmpty) 'titre': titreCtrl.text.trim(),
+                      if (descCtrl.text.trim().isNotEmpty) 'description': descCtrl.text.trim(),
+                      'type_paiement': selectedPricingType,
+                      'urgent': urgent,
+                      if (villeCtrl.text.trim().isNotEmpty) 'ville': villeCtrl.text.trim(),
+                    };
+                    if (selectedPricingType != 'quote') {
+                      fields['prix'] = double.tryParse(prixCtrl.text);
+                    }
+                    final res = await AnnonceService.updateAnnonce(annonceId, fields);
+                    setSheet(() => saving = false);
+                    if (!mounted) return;
+                    Navigator.pop(ctx);
+                    if (res.success) {
+                      _loadFeed(reset: true);
+                      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                        content: Text('Offre modifiée avec succès'),
+                        backgroundColor: Color(0xFF2D9B6F),
+                        behavior: SnackBarBehavior.floating,
+                      ));
+                    } else {
+                      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                        content: Text(res.message ?? 'Erreur'),
+                        backgroundColor: const Color(0xFFEF4444),
+                        behavior: SnackBarBehavior.floating,
+                      ));
+                    }
+                  },
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF0D1F3C),
+                    padding: const EdgeInsets.symmetric(vertical: 16),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                  ),
+                  child: saving
+                      ? const SizedBox(height: 18, width: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                      : const Text('Enregistrer', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                ),
+              ],
+            ),
           ),
         ),
       ),
@@ -347,6 +631,11 @@ class _HomeScreenState extends State<HomeScreen> {
     bool detailLoaded = false;
     List<Map<String, dynamic>> commentaires = [];
     List<Map<String, dynamic>> likesList = [];
+    List<String> photoUrls = annonce['premiere_photo'] != null
+        ? [annonce['premiere_photo'].toString()]
+        : <String>[];
+    int photoIndex = 0;
+    Map<String, dynamic> displayData = Map<String, dynamic>.from(annonce);
 
     void loadDetail(void Function(void Function()) setSheet) {
       if (detailLoaded || annonceId == 0) return;
@@ -356,11 +645,16 @@ class _HomeScreenState extends State<HomeScreen> {
         if (res.success && res.data != null) {
           setSheet(() {
             final det = res.data as Map<String, dynamic>;
+            displayData = {...displayData, ...det};
             likedLocally = det['is_liked'] == true;
             isOwner = fromMineTab || det['is_owner'] == true;
             likesLocally = det['likes_count'] ?? likesLocally;
             commentaires = List<Map<String, dynamic>>.from(det['commentaires'] ?? []);
             likesList = List<Map<String, dynamic>>.from(det['likes'] ?? []);
+            final photos = List<Map<String, dynamic>>.from(det['photos'] ?? []);
+            if (photos.isNotEmpty) {
+              photoUrls = photos.map((p) => p['url'].toString()).toList();
+            }
             detailLoading = false;
           });
         } else {
@@ -381,20 +675,17 @@ class _HomeScreenState extends State<HomeScreen> {
           builder: (sheetCtx, setSheet) {
             loadDetail(setSheet);
 
-            final String titre = annonce['titre'] ?? '';
-            final String nomUser = annonce['nom_user'] ?? 'Inconnu';
-            final String? telUser = annonce['tel_user'];
-            final String? avatarUser = annonce['avatar_user'];
-            final String description = annonce['description'] ?? '';
-            final String ville = annonce['ville'] ?? '';
-            final String? premierePhoto = annonce['premiere_photo'];
-            final String emoji = _categoryEmoji(annonce['categorie']);
-            final double? prixVal = annonce['prix'] != null
-                ? double.tryParse(annonce['prix'].toString())
-                : null;
-            final String prixLabel = prixVal != null ? '${prixVal.toStringAsFixed(0)} QAR' : 'Sur devis';
+            final String titre = displayData['titre'] ?? '';
+            final String nomUser = displayData['nom_user'] ?? 'Inconnu';
+            final String? telUser = displayData['tel_user'];
+            final String? avatarUser = displayData['avatar_user'];
+            final String description = displayData['description'] ?? '';
+            final String ville = displayData['ville'] ?? '';
+            final String emoji = _categoryEmoji(displayData['categorie']);
+            final String prixLabel = _formatPrixLabel(displayData);
             final bool showAsOwner = fromMineTab || isOwner;
             final bool canComment = _isLoggedIn && !showAsOwner;
+            final bool isUrgent = _isUrgentActive(displayData);
 
             Future<void> sendComment() async {
               final txt = commentCtrl.text.trim();
@@ -443,43 +734,62 @@ class _HomeScreenState extends State<HomeScreen> {
             }
 
             Widget buildCommentTile(Map<String, dynamic> c, {bool showContact = false}) {
+              final avatar = c['avatar_user'];
               return Container(
                 margin: const EdgeInsets.only(bottom: 10),
                 padding: const EdgeInsets.all(12),
                 decoration: BoxDecoration(
                     color: const Color(0xFFF5F7FA), borderRadius: BorderRadius.circular(12)),
-                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Text(c['nom_user'] ?? 'Utilisateur',
-                          style: const TextStyle(fontWeight: FontWeight.bold, color: Color(0xFF0D1F3C), fontSize: 13)),
-                      if (showContact)
-                        GestureDetector(
-                          onTap: () {
-                            Navigator.pop(sheetCtx);
-                            _showContactOptions(c['nom_user'] ?? 'Utilisateur', c['tel_user']);
-                          },
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                            decoration: BoxDecoration(
-                              color: const Color(0xFFE8EDF5),
-                              borderRadius: BorderRadius.circular(8),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    CircleAvatar(
+                      radius: 16,
+                      backgroundColor: const Color(0xFFE8EDF5),
+                      backgroundImage: avatar != null ? NetworkImage(avatar) : null,
+                      child: avatar == null
+                          ? const Icon(Icons.person, size: 16, color: Color(0xFF6B7A99))
+                          : null,
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Expanded(
+                              child: Text(c['nom_user'] ?? 'Utilisateur',
+                                  style: const TextStyle(fontWeight: FontWeight.bold, color: Color(0xFF0D1F3C), fontSize: 13)),
                             ),
-                            child: const Row(
-                              children: [
-                                Icon(Icons.chat_bubble_outline, size: 12, color: Color(0xFF0D1F3C)),
-                                SizedBox(width: 4),
-                                Text('Contacter', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Color(0xFF0D1F3C))),
-                              ],
-                            ),
-                          ),
+                            if (showContact)
+                              GestureDetector(
+                                onTap: () {
+                                  Navigator.pop(sheetCtx);
+                                  _showContactOptions(c['nom_user'] ?? 'Utilisateur', c['tel_user']);
+                                },
+                                child: Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                  decoration: BoxDecoration(
+                                    color: const Color(0xFFE8EDF5),
+                                    borderRadius: BorderRadius.circular(8),
+                                  ),
+                                  child: const Row(
+                                    children: [
+                                      Icon(Icons.chat_bubble_outline, size: 12, color: Color(0xFF0D1F3C)),
+                                      SizedBox(width: 4),
+                                      Text('Contacter', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Color(0xFF0D1F3C))),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                          ],
                         ),
-                    ],
-                  ),
-                  const SizedBox(height: 4),
-                  Text(c['contenu'] ?? '', style: const TextStyle(color: Color(0xFF6B7A99), fontSize: 13, height: 1.5)),
-                ]),
+                        const SizedBox(height: 4),
+                        Text(c['contenu'] ?? '', style: const TextStyle(color: Color(0xFF6B7A99), fontSize: 13, height: 1.5)),
+                      ]),
+                    ),
+                  ],
+                ),
               );
             }
 
@@ -495,17 +805,27 @@ class _HomeScreenState extends State<HomeScreen> {
                             decoration: BoxDecoration(color: const Color(0xFFE8EDF5), borderRadius: BorderRadius.circular(2)))),
                         const SizedBox(height: 16),
 
-                        if (premierePhoto != null)
-                          ClipRRect(borderRadius: BorderRadius.circular(16),
-                            child: Image.network(premierePhoto, height: 180, fit: BoxFit.cover,
-                                errorBuilder: (_, __, ___) => Container(height: 100, color: const Color(0xFFF5F7FA),
-                                    alignment: Alignment.center, child: Text(emoji, style: const TextStyle(fontSize: 50)))))
-                        else
-                          Container(height: 90, decoration: BoxDecoration(color: const Color(0xFFF5F7FA), borderRadius: BorderRadius.circular(16)),
-                              alignment: Alignment.center, child: Text(emoji, style: const TextStyle(fontSize: 50))),
+                        _buildPhotoCarousel(
+                          urls: photoUrls,
+                          emoji: emoji,
+                          currentIndex: photoIndex,
+                          onIndexChanged: (i) => setSheet(() => photoIndex = i),
+                        ),
                         const SizedBox(height: 16),
 
-                        Text(titre, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Color(0xFF0D1F3C))),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Text(titre,
+                                  style: const TextStyle(
+                                      fontSize: 20, fontWeight: FontWeight.bold, color: Color(0xFF0D1F3C))),
+                            ),
+                            if (isUrgent) ...[
+                              const SizedBox(width: 8),
+                              _buildUrgentBadge(),
+                            ],
+                          ],
+                        ),
                         const SizedBox(height: 6),
                         Row(children: [
                           CircleAvatar(radius: 12, backgroundColor: const Color(0xFFE8EDF5),
@@ -593,45 +913,6 @@ class _HomeScreenState extends State<HomeScreen> {
                             ),
                           ]),
                         ]),
-                        if (likesList.isNotEmpty) ...[
-                          const SizedBox(height: 10),
-                          const Text('Aimé par',
-                              style: TextStyle(fontWeight: FontWeight.bold, color: Color(0xFF0D1F3C), fontSize: 13)),
-                          const SizedBox(height: 6),
-                          Wrap(
-                            spacing: 6,
-                            runSpacing: 6,
-                            children: likesList.map((l) {
-                              final avatar = l['avatar_user'];
-                              final name = l['nom_user'] ?? 'Utilisateur';
-                              return GestureDetector(
-                                onTap: () => _showLikesList(likesList),
-                                child: Container(
-                                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                                  decoration: BoxDecoration(
-                                    color: const Color(0xFFF5F7FA),
-                                    borderRadius: BorderRadius.circular(20),
-                                  ),
-                                  child: Row(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      CircleAvatar(
-                                        radius: 10,
-                                        backgroundColor: const Color(0xFFE8EDF5),
-                                        backgroundImage: avatar != null ? NetworkImage(avatar) : null,
-                                        child: avatar == null
-                                            ? const Icon(Icons.person, size: 10, color: Color(0xFF6B7A99))
-                                            : null,
-                                      ),
-                                      const SizedBox(width: 5),
-                                      Text(name, style: const TextStyle(fontSize: 11, color: Color(0xFF6B7A99))),
-                                    ],
-                                  ),
-                                ),
-                              );
-                            }).toList(),
-                          ),
-                        ],
                         const SizedBox(height: 16),
 
                         if (description.isNotEmpty) ...[
@@ -1039,10 +1320,10 @@ class _HomeScreenState extends State<HomeScreen> {
     final String? premierePhoto = a['premiere_photo'];
     final String emoji = _categoryEmoji(a['categorie']);
     final String description = a['description'] ?? '';
-    final double? prixVal = a['prix'] != null ? double.tryParse(a['prix'].toString()) : null;
-    final String prixLabel = prixVal != null ? '${prixVal.toStringAsFixed(0)} QAR' : 'Sur devis';
+    final String prixLabel = _formatPrixLabel(a);
     final int nbLikes = a['nb_likes'] ?? 0;
     final int nbCommentaires = a['nb_commentaires'] ?? 0;
+    final bool isUrgent = _isUrgentActive(a);
 
     return Card(
       margin: const EdgeInsets.only(bottom: 14),
@@ -1057,11 +1338,17 @@ class _HomeScreenState extends State<HomeScreen> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
           if (premierePhoto != null)
-            ClipRRect(
-              borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
-              child: Image.network(premierePhoto, height: 150, width: double.infinity, fit: BoxFit.cover,
-                  errorBuilder: (_, __, ___) => Container(height: 70, color: const Color(0xFFF5F7FA),
-                      alignment: Alignment.center, child: Text(emoji, style: const TextStyle(fontSize: 36)))),
+            Stack(
+              children: [
+                ClipRRect(
+                  borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+                  child: Image.network(premierePhoto, height: 150, width: double.infinity, fit: BoxFit.cover,
+                      errorBuilder: (_, __, ___) => Container(height: 70, color: const Color(0xFFF5F7FA),
+                          alignment: Alignment.center, child: Text(emoji, style: const TextStyle(fontSize: 36)))),
+                ),
+                if (isUrgent)
+                  Positioned(top: 10, right: 10, child: _buildUrgentBadge()),
+              ],
             ),
           Padding(
             padding: const EdgeInsets.all(14),
@@ -1162,9 +1449,9 @@ class _HomeScreenState extends State<HomeScreen> {
     final String emoji = _categoryEmoji(a['categorie']);
     final String description = a['description'] ?? '';
     final String ville = a['ville'] ?? '';
-    final double? prixVal = a['prix'] != null ? double.tryParse(a['prix'].toString()) : null;
-    final String prixLabel = prixVal != null ? '${prixVal.toStringAsFixed(0)} QAR' : 'Sur devis';
+    final String prixLabel = _formatPrixLabel(a);
     final int nbLikes = a['nb_likes'] ?? 0;
+    final bool isUrgent = _isUrgentActive(a);
 
     return Card(
       margin: const EdgeInsets.only(bottom: 14),
@@ -1179,11 +1466,17 @@ class _HomeScreenState extends State<HomeScreen> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             if (premierePhoto != null)
-              ClipRRect(
-                borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
-                child: Image.network(premierePhoto, height: 150, width: double.infinity, fit: BoxFit.cover,
-                    errorBuilder: (_, __, ___) => Container(height: 70, color: const Color(0xFFF5F7FA),
-                        alignment: Alignment.center, child: Text(emoji, style: const TextStyle(fontSize: 36)))),
+              Stack(
+                children: [
+                  ClipRRect(
+                    borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+                    child: Image.network(premierePhoto, height: 150, width: double.infinity, fit: BoxFit.cover,
+                        errorBuilder: (_, __, ___) => Container(height: 70, color: const Color(0xFFF5F7FA),
+                            alignment: Alignment.center, child: Text(emoji, style: const TextStyle(fontSize: 36)))),
+                  ),
+                  if (isUrgent)
+                    Positioned(top: 10, right: 10, child: _buildUrgentBadge()),
+                ],
               ),
             Padding(
               padding: const EdgeInsets.all(14),

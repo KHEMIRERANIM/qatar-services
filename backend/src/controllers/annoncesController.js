@@ -39,8 +39,11 @@ exports.getFeed = async (req, res) => {
         a.prix,
         a.ville, 
         a.type_paiement,
+        a.urgent,
+        a.urgent_until,
         a.created_at,
         (SELECT url FROM annonce_photos WHERE annonce_id = a.id ORDER BY ordre ASC, id ASC LIMIT 1) AS premiere_photo,
+        (SELECT COUNT(*) FROM annonce_photos WHERE annonce_id = a.id) AS nb_photos,
         (SELECT COUNT(*) FROM annonce_likes WHERE annonce_id = a.id) AS nb_likes,
         (SELECT COUNT(*) FROM commentaires WHERE annonce_id = a.id) AS nb_commentaires,
         CONCAT(u.prenom, ' ', u.nom) AS nom_user,
@@ -80,7 +83,10 @@ exports.getFeed = async (req, res) => {
       countParams.push(req.user.id);
     }
 
-    sql += " ORDER BY a.created_at DESC LIMIT ? OFFSET ?";
+    sql += ` ORDER BY 
+      (CASE WHEN a.urgent = 1 AND (a.urgent_until IS NULL OR a.urgent_until > NOW()) THEN 0 ELSE 1 END) ASC,
+      a.created_at DESC 
+      LIMIT ? OFFSET ?`;
     queryParams.push(limit, offset);
 
     // Exécuter le comptage et la récupération
@@ -105,17 +111,21 @@ exports.getFeed = async (req, res) => {
 // POST /api/annonces - Créer une annonce (authentifié)
 exports.createAnnonce = async (req, res) => {
   try {
-    const { titre, description, categorie, prix, ville, photos, type_paiement } = req.body;
+    const { titre, description, categorie, prix, ville, photos, type_paiement, urgent } = req.body;
 
     if (!titre || !description) {
       return res.status(400).json({ success: false, message: 'Le titre et la description sont requis.' });
     }
 
+    const pricingType = type_paiement || 'hourly';
+    const isUrgent = urgent === true || urgent === 1 || urgent === '1';
+    const finalPrix = pricingType === 'quote' ? null : (prix ?? null);
+
     // Insérer l'annonce
     const [result] = await db.query(
-      `INSERT INTO annonces (user_id, titre, description, categorie, prix, ville, type_paiement, statut) 
-       VALUES (?, ?, ?, ?, ?, ?, ?, 'active')`,
-      [req.user.id, titre, description, categorie || null, prix || null, ville || null, type_paiement || 'Espèces']
+      `INSERT INTO annonces (user_id, titre, description, categorie, prix, ville, type_paiement, urgent, urgent_until, statut) 
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ${isUrgent ? 'DATE_ADD(NOW(), INTERVAL 3 DAY)' : 'NULL'}, 'active')`,
+      [req.user.id, titre, description, categorie || null, finalPrix, ville || null, pricingType, isUrgent ? 1 : 0]
     );
 
     const annonceId = result.insertId;
@@ -149,7 +159,7 @@ exports.getDetail = async (req, res) => {
     // 1. Récupérer les infos principales de l'annonce
     const [annonces] = await db.query(
       `SELECT 
-        a.id, a.user_id, a.titre, a.description, a.categorie, a.prix, a.ville, a.type_paiement, a.statut, a.created_at,
+        a.id, a.user_id, a.titre, a.description, a.categorie, a.prix, a.ville, a.type_paiement, a.urgent, a.urgent_until, a.statut, a.created_at,
         CONCAT(u.prenom, ' ', u.nom) AS nom_user,
         u.photo AS avatar_user
        FROM annonces a
@@ -231,7 +241,7 @@ exports.getDetail = async (req, res) => {
 exports.updateAnnonce = async (req, res) => {
   try {
     const { id } = req.params;
-    const { titre, description, categorie, prix, ville, statut, type_paiement } = req.body;
+    const { titre, description, categorie, prix, ville, statut, type_paiement, urgent } = req.body;
 
     // Vérifier l'annonce
     const [annonces] = await db.query("SELECT user_id FROM annonces WHERE id = ?", [id]);
@@ -248,19 +258,44 @@ exports.updateAnnonce = async (req, res) => {
       return res.status(400).json({ success: false, message: 'Statut invalide.' });
     }
 
-    // Mise à jour
-    await db.query(
-      `UPDATE annonces SET
-        titre = COALESCE(?, titre),
-        description = COALESCE(?, description),
-        categorie = COALESCE(?, categorie),
-        prix = COALESCE(?, prix),
-        ville = COALESCE(?, ville),
-        type_paiement = COALESCE(?, type_paiement),
-        statut = COALESCE(?, statut)
-       WHERE id = ?`,
-      [titre || null, description || null, categorie || null, prix || null, ville || null, type_paiement || null, statut || null, id]
-    );
+    const updates = [];
+    const params = [];
+
+    if (titre !== undefined) { updates.push('titre = ?'); params.push(titre); }
+    if (description !== undefined) { updates.push('description = ?'); params.push(description); }
+    if (categorie !== undefined) { updates.push('categorie = ?'); params.push(categorie); }
+    if (ville !== undefined) { updates.push('ville = ?'); params.push(ville); }
+    if (statut !== undefined) { updates.push('statut = ?'); params.push(statut); }
+
+    if (type_paiement !== undefined) {
+      updates.push('type_paiement = ?');
+      params.push(type_paiement);
+      if (type_paiement === 'quote') {
+        updates.push('prix = NULL');
+      } else if (prix !== undefined) {
+        updates.push('prix = ?');
+        params.push(prix);
+      }
+    } else if (prix !== undefined) {
+      updates.push('prix = ?');
+      params.push(prix);
+    }
+
+    if (urgent !== undefined) {
+      const isUrgent = urgent === true || urgent === 1 || urgent === '1';
+      if (isUrgent) {
+        updates.push('urgent = 1', 'urgent_until = DATE_ADD(NOW(), INTERVAL 3 DAY)');
+      } else {
+        updates.push('urgent = 0', 'urgent_until = NULL');
+      }
+    }
+
+    if (updates.length === 0) {
+      return res.status(400).json({ success: false, message: 'Aucun champ à modifier.' });
+    }
+
+    params.push(id);
+    await db.query(`UPDATE annonces SET ${updates.join(', ')} WHERE id = ?`, params);
 
     res.json({ success: true, message: 'Annonce modifiée avec succès.' });
 
@@ -319,6 +354,14 @@ exports.uploadPhoto = async (req, res) => {
 
     const file = req.files.photo || req.files.image || Object.values(req.files)[0];
 
+    const [countResult] = await db.query(
+      "SELECT COUNT(*) AS cnt FROM annonce_photos WHERE annonce_id = ?",
+      [id]
+    );
+    if (countResult[0].cnt >= 2) {
+      return res.status(400).json({ success: false, message: 'Maximum 2 photos par annonce.' });
+    }
+
     // 3. Téléverser vers Cloudinary
     let uploadResult;
     if (file.tempFilePath) {
@@ -353,6 +396,36 @@ exports.uploadPhoto = async (req, res) => {
       }
     });
 
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// DELETE /api/annonces/:id/photos/:pid - Supprimer une photo (propriétaire uniquement)
+exports.deletePhoto = async (req, res) => {
+  try {
+    const { id, pid } = req.params;
+
+    const [annonces] = await db.query("SELECT user_id FROM annonces WHERE id = ?", [id]);
+    if (annonces.length === 0) {
+      return res.status(404).json({ success: false, message: 'Annonce introuvable.' });
+    }
+
+    if (annonces[0].user_id !== req.user.id) {
+      return res.status(403).json({ success: false, message: 'Action non autorisée.' });
+    }
+
+    const [photos] = await db.query(
+      "SELECT id FROM annonce_photos WHERE id = ? AND annonce_id = ?",
+      [pid, id]
+    );
+    if (photos.length === 0) {
+      return res.status(404).json({ success: false, message: 'Photo introuvable.' });
+    }
+
+    await db.query("DELETE FROM annonce_photos WHERE id = ?", [pid]);
+
+    res.json({ success: true, message: 'Photo supprimée avec succès.' });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }

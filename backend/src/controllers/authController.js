@@ -391,13 +391,13 @@ exports.updateProfile = async (req, res) => {
 }
 
 // UPDATE — VERIFICATION EMAIL (STATUS ACTIVE)
+
 exports.verifyEmail = async (req, res) => {
   try {
     await db.query(
       "UPDATE users SET statut = 'actif' WHERE id = ?",
       [req.user.id]
     )
-
     res.json({
       success: true,
       message: 'Email vérifié et statut mis à jour dans MySQL'
@@ -406,7 +406,6 @@ exports.verifyEmail = async (req, res) => {
     res.status(500).json({ message: error.message })
   }
 }
-
 // POST — SOCIAL LOGIN (GOOGLE / APPLE)
 exports.socialLogin = async (req, res) => {
   try {
@@ -441,18 +440,24 @@ exports.socialLogin = async (req, res) => {
         [email]
       )
       user = newUsers[0]
-    } else {
-      user = users[0]
-      // If user exists but is inactive, activate them since they logged in via verified social auth
-      if (user.statut !== 'actif') {
-        await db.query(
-          "UPDATE users SET statut = 'actif' WHERE id = ?",
-          [user.id]
-        )
-        user.statut = 'actif'
-      }
+  } else {
+    user = users[0]
+    // Si pas de photo, utilise la photo Google
+    if (!user.photo && photo) {
+      await db.query(
+        'UPDATE users SET photo = ? WHERE id = ?',
+        [photo, user.id]
+      )
+      user.photo = photo
     }
-
+    if (user.statut !== 'actif') {
+      await db.query(
+        "UPDATE users SET statut = 'actif' WHERE id = ?",
+        [user.id]
+      )
+      user.statut = 'actif'
+    }
+  }
     // Generate backend JWT tokens
     const token = jwt.sign(
       { id: user.id, uuid: user.uuid },
