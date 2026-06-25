@@ -6,6 +6,7 @@ const authMiddleware = require('../middlewares/authMiddleware')
 // Routes publiques
 router.post('/register', authController.register)
 router.post('/login', authController.login)
+router.post('/refresh', authController.refreshToken)
 router.post('/forgot-password', authController.forgotPassword)
 router.post('/social-login', authController.socialLogin)
 router.post('/sync-password', authController.syncPassword)

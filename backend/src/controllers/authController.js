@@ -162,7 +162,7 @@ exports.login = async (req, res) => {
     await db.query(
       `INSERT INTO tokens
        (user_id, token, refresh_token, expire_le)
-       VALUES (?, ?, ?, DATE_ADD(NOW(), INTERVAL 24 HOUR))`,
+       VALUES (?, ?, ?, DATE_ADD(NOW(), INTERVAL 7 DAY))`,
       [user.id, token, refreshToken]
     )
 
@@ -474,7 +474,7 @@ exports.socialLogin = async (req, res) => {
     await db.query(
       `INSERT INTO tokens
        (user_id, token, refresh_token, expire_le)
-       VALUES (?, ?, ?, DATE_ADD(NOW(), INTERVAL 24 HOUR))`,
+       VALUES (?, ?, ?, DATE_ADD(NOW(), INTERVAL 7 DAY))`,
       [user.id, token, refreshToken]
     )
 
@@ -633,7 +633,7 @@ exports.loginPhone = async (req, res) => {
     await db.query(
       `INSERT INTO tokens
        (user_id, token, refresh_token, expire_le)
-       VALUES (?, ?, ?, DATE_ADD(NOW(), INTERVAL 24 HOUR))`,
+       VALUES (?, ?, ?, DATE_ADD(NOW(), INTERVAL 7 DAY))`,
       [user.id, token, refreshToken]
     )
 
@@ -703,3 +703,63 @@ exports.updateProfilePhoto = async (req, res) => {
     res.status(500).json({ success: false, message: error.message });
   }
 };
+
+// ═══════════════════════════
+// POST — REFRESH TOKEN
+// ═══════════════════════════
+exports.refreshToken = async (req, res) => {
+  try {
+    const { refreshToken } = req.body
+
+    if (!refreshToken) {
+      return res.status(400).json({ message: 'Refresh token obligatoire' })
+    }
+
+    // 1. Vérifier si le refresh token existe et n'est pas révoqué en BDD
+    const [tokens] = await db.query(
+      'SELECT * FROM tokens WHERE refresh_token = ? AND revoque = FALSE AND expire_le > NOW()',
+      [refreshToken]
+    )
+
+    if (tokens.length === 0) {
+      return res.status(401).json({ message: 'Refresh token invalide ou expiré' })
+    }
+
+    const tokenRecord = tokens[0]
+
+    // 2. Vérifier la signature du refresh token
+    let decoded;
+    try {
+      decoded = jwt.verify(refreshToken, process.env.JWT_SECRET)
+    } catch (err) {
+      return res.status(401).json({ message: 'Refresh token invalide' })
+    }
+
+    // 3. Récupérer l'utilisateur
+    const [users] = await db.query('SELECT * FROM users WHERE id = ?', [tokenRecord.user_id])
+    if (users.length === 0) {
+      return res.status(401).json({ message: 'Utilisateur introuvable' })
+    }
+    const user = users[0]
+
+    // 4. Générer un nouveau token d'accès
+    const newToken = jwt.sign(
+      { id: user.id, uuid: user.uuid },
+      process.env.JWT_SECRET,
+      { expiresIn: process.env.JWT_EXPIRE }
+    )
+
+    // 5. Mettre à jour le token d'accès en base de données pour cette session
+    await db.query(
+      'UPDATE tokens SET token = ? WHERE id = ?',
+      [newToken, tokenRecord.id]
+    )
+
+    res.json({
+      token: newToken
+    })
+
+  } catch (error) {
+    res.status(500).json({ message: error.message })
+  }
+}

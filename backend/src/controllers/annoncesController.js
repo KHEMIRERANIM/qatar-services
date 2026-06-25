@@ -29,7 +29,8 @@ exports.getFeed = async (req, res) => {
     const offset = (page - 1) * limit;
 
     // Construction de la requête avec filtres optionnels
-    let countSql = "SELECT COUNT(*) as total FROM annonces WHERE statut = 'active'";
+    // Construction de la requête avec filtres optionnels
+    let countSql = "SELECT COUNT(*) as total FROM annonces WHERE 1=1";
     let sql = `
       SELECT 
         a.id, 
@@ -41,6 +42,7 @@ exports.getFeed = async (req, res) => {
         a.type_paiement,
         a.urgent,
         a.urgent_until,
+        a.statut,
         a.created_at,
         (SELECT url FROM annonce_photos WHERE annonce_id = a.id ORDER BY ordre ASC, id ASC LIMIT 1) AS premiere_photo,
         (SELECT COUNT(*) FROM annonce_photos WHERE annonce_id = a.id) AS nb_photos,
@@ -51,11 +53,31 @@ exports.getFeed = async (req, res) => {
         u.telephone AS tel_user
       FROM annonces a
       LEFT JOIN users u ON a.user_id = u.id
-      WHERE a.statut = 'active'
+      WHERE 1=1
     `;
 
     const queryParams = [];
     const countParams = [];
+
+    // Gestion du filtre 'mine' vs 'others'/'tous'
+    if (filter === 'mine' && req.user) {
+      // Pour "mes annonces", on affiche toutes les annonces (même en pause/expirée)
+      sql += " AND a.user_id = ?";
+      countSql += " AND user_id = ?";
+      queryParams.push(req.user.id);
+      countParams.push(req.user.id);
+    } else {
+      // Sinon on ne montre que les annonces actives
+      sql += " AND a.statut = 'active'";
+      countSql += " AND statut = 'active'";
+
+      if (filter === 'others' && req.user) {
+        sql += " AND a.user_id != ?";
+        countSql += " AND user_id != ?";
+        queryParams.push(req.user.id);
+        countParams.push(req.user.id);
+      }
+    }
 
     if (categorie) {
       sql += " AND a.categorie = ?";
@@ -69,18 +91,6 @@ exports.getFeed = async (req, res) => {
       countSql += " AND ville = ?";
       queryParams.push(ville);
       countParams.push(ville);
-    }
-
-    if (filter === 'mine' && req.user) {
-      sql += " AND a.user_id = ?";
-      countSql += " AND user_id = ?";
-      queryParams.push(req.user.id);
-      countParams.push(req.user.id);
-    } else if (filter === 'others' && req.user) {
-      sql += " AND a.user_id != ?";
-      countSql += " AND user_id != ?";
-      queryParams.push(req.user.id);
-      countParams.push(req.user.id);
     }
 
     sql += ` ORDER BY 

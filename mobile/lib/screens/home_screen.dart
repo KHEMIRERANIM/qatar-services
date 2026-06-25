@@ -16,9 +16,10 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   int _currentIndex = 0;
+  final GlobalKey<ProfileScreenState> _profileKey = GlobalKey<ProfileScreenState>();
 
   // Filtre onglet : "mine" ou "others"
-  String _selectedFilter = 'mine';
+  String _selectedFilter = 'others';
   bool _isLoggedIn = false;
 
   // Filtre catégorie
@@ -316,6 +317,9 @@ class _HomeScreenState extends State<HomeScreen> {
     if (!mounted) return;
     if (res.success) {
       setState(() => _annonces.removeWhere((a) => a['id'] == id));
+      if (_profileKey.currentState != null) {
+        _profileKey.currentState!.loadMyAnnonces();
+      }
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
         content: Text('Offre supprimée avec succès'),
         backgroundColor: Color(0xFF2D9B6F),
@@ -563,6 +567,9 @@ class _HomeScreenState extends State<HomeScreen> {
                     Navigator.pop(ctx);
                     if (res.success) {
                       _loadFeed(reset: true);
+                      if (_profileKey.currentState != null) {
+                        _profileKey.currentState!.loadMyAnnonces();
+                      }
                       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
                         content: Text('Offre modifiée avec succès'),
                         backgroundColor: Color(0xFF2D9B6F),
@@ -1110,8 +1117,12 @@ class _HomeScreenState extends State<HomeScreen> {
       );
     } else if (_currentIndex == 2) {
       bodyWidget = ProfileScreen(
+        key: _profileKey,
         onLogout: widget.onLogout,
         onAddService: () => setState(() => _currentIndex = 1),
+        onAnnonceTap: (annonce) => _showOffreProposeeDetails(annonce, fromMineTab: true),
+        onEditAnnonce: (annonce) => _showEditModal(annonce),
+        onDeleteAnnonce: (id) => _deleteAnnonce(id),
       );
     } else {
       bodyWidget = _buildHomeTab();
@@ -1212,24 +1223,6 @@ class _HomeScreenState extends State<HomeScreen> {
             ],
           ),
         ),
-
-        // ONGLETS FILTRE
-        if (_isLoggedIn)
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 14, 16, 0),
-            child: Container(
-              height: 44,
-              decoration: BoxDecoration(
-                color: const Color(0xFFE8EDF5).withOpacity(0.5),
-                borderRadius: BorderRadius.circular(14),
-              ),
-              padding: const EdgeInsets.all(4),
-              child: Row(children: [
-                Expanded(child: _buildFilterTab('mine', '📋 Mes offres')),
-                Expanded(child: _buildFilterTab('others', '🌐 Offres disponibles')),
-              ]),
-            ),
-          ),
 
         // FILTRES CATÉGORIES
         Padding(
@@ -1571,32 +1564,6 @@ class _HomeScreenState extends State<HomeScreen> {
               width: 1.5),
         ),
         showCheckmark: false,
-      ),
-    );
-  }
-
-  Widget _buildFilterTab(String id, String label) {
-    final isSelected = _selectedFilter == id;
-    return GestureDetector(
-      onTap: () => _onFilterChanged(id),
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 200),
-        decoration: BoxDecoration(
-          color: isSelected ? Colors.white : Colors.transparent,
-          borderRadius: BorderRadius.circular(10),
-          boxShadow: isSelected
-              ? [BoxShadow(color: Colors.black.withOpacity(0.06), blurRadius: 6, offset: const Offset(0, 2))]
-              : null,
-        ),
-        alignment: Alignment.center,
-        child: Text(
-          label,
-          style: TextStyle(
-            color: isSelected ? const Color(0xFF0D1F3C) : const Color(0xFF6B7A99),
-            fontWeight: isSelected ? FontWeight.bold : FontWeight.w500,
-            fontSize: 12,
-          ),
-        ),
       ),
     );
   }

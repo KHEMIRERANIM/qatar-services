@@ -7,24 +7,31 @@ import 'package:file_picker/file_picker.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../services/auth_service.dart';
 import '../services/pro_service.dart';
+import '../services/annonce_service.dart';
 import 'veriff_verification_screen.dart';
 import 'native_identity_verification_screen.dart';
 
 class ProfileScreen extends StatefulWidget {
   final VoidCallback onLogout;
   final VoidCallback onAddService;
+  final Function(Map<String, dynamic>)? onAnnonceTap;
+  final Function(Map<String, dynamic>)? onEditAnnonce;
+  final Function(int)? onDeleteAnnonce;
 
   const ProfileScreen({
     super.key,
     required this.onLogout,
     required this.onAddService,
+    this.onAnnonceTap,
+    this.onEditAnnonce,
+    this.onDeleteAnnonce,
   });
 
   @override
-  State<ProfileScreen> createState() => _ProfileScreenState();
+  State<ProfileScreen> createState() => ProfileScreenState();
 }
 
-class _ProfileScreenState extends State<ProfileScreen> {
+class ProfileScreenState extends State<ProfileScreen> {
   bool _isPro = false;
   bool _isLoadingProfile = true;
 
@@ -40,16 +47,31 @@ class _ProfileScreenState extends State<ProfileScreen> {
   final String _proPhone = "+974 5598 7654";
   final String _proImageUrl = "https://images.unsplash.com/photo-1531746020798-e6953c6e8e04?w=200&h=200&fit=crop&auto=format";
 
-  final List<Map<String, dynamic>> _proServices = [
-    {"id": 1, "title": "Cours d'anglais", "price": "80 QAR/h", "active": true},
-    {"id": 2, "title": "Traduction FR/AR", "price": "50 QAR/h", "active": true},
-    {"id": 3, "title": "Préparation IELTS", "price": "120 QAR/h", "active": false},
-  ];
+  List<Map<String, dynamic>> _myAnnonces = [];
+  bool _isLoadingAnnonces = true;
 
   @override
   void initState() {
     super.initState();
     _loadProfile();
+    loadMyAnnonces();
+  }
+
+  Future<void> loadMyAnnonces() async {
+    print('📋 [PROFILE] Chargement de mes annonces...');
+    final result = await AnnonceService.getFeed(filter: 'mine', limit: 50);
+    print('📋 [PROFILE] Résultat: success=${result.success}, message=${result.message}, data=${result.data}');
+    if (!mounted) return;
+    setState(() {
+      _isLoadingAnnonces = false;
+      if (result.success && result.data != null) {
+        final data = result.data as Map<String, dynamic>;
+        _myAnnonces = List<Map<String, dynamic>>.from(data['data'] ?? []);
+        print('📋 [PROFILE] ${_myAnnonces.length} annonces chargées');
+      } else {
+        print('📋 [PROFILE] ERREUR: ${result.message}');
+      }
+    });
   }
 
   Future<void> _loadProfile() async {
@@ -633,6 +655,45 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
             const SizedBox(height: 20),
 
+            // Mes annonces section
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 20),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    "Mes annonces",
+                    style: TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.bold,
+                      color: Color(0xFF0D1F3C),
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  if (_isLoadingAnnonces)
+                    const Padding(
+                      padding: EdgeInsets.all(20.0),
+                      child: Center(child: CircularProgressIndicator(color: Color(0xFF0D1F3C))),
+                    )
+                  else if (_myAnnonces.isEmpty)
+                    const Padding(
+                      padding: EdgeInsets.all(20.0),
+                      child: Center(child: Text("Vous n'avez aucune annonce.")),
+                    )
+                  else
+                    ListView.builder(
+                      shrinkWrap: true,
+                      physics: const NeverScrollableScrollPhysics(),
+                      padding: EdgeInsets.zero,
+                      itemCount: _myAnnonces.length,
+                      itemBuilder: (context, index) => _buildAnnonceCard(_myAnnonces[index]),
+                    ),
+                ],
+              ),
+            ),
+
+            const SizedBox(height: 20),
+
             // Navigation menu list
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 20),
@@ -955,71 +1016,24 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     ),
                   ),
                   const SizedBox(height: 10),
-                  ListView.builder(
-                    shrinkWrap: true,
-                    physics: const NeverScrollableScrollPhysics(),
-                    padding: EdgeInsets.zero,
-                    itemCount: _proServices.length,
-                    itemBuilder: (context, index) {
-                      final s = _proServices[index];
-                      return Container(
-                        margin: const EdgeInsets.only(bottom: 10),
-                        padding: const EdgeInsets.all(16),
-                        decoration: BoxDecoration(
-                          color: Colors.white,
-                          borderRadius: BorderRadius.circular(20),
-                          boxShadow: [
-                            BoxShadow(
-                              color: Colors.black.withOpacity(0.03),
-                              blurRadius: 8,
-                            ),
-                          ],
-                        ),
-                        child: Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  s["title"],
-                                  style: const TextStyle(
-                                    fontSize: 14,
-                                    fontWeight: FontWeight.w600,
-                                    color: Color(0xFF0D1F3C),
-                                  ),
-                                ),
-                                const SizedBox(height: 2),
-                                Text(
-                                  s["price"],
-                                  style: const TextStyle(
-                                    fontSize: 13,
-                                    fontWeight: FontWeight.bold,
-                                    color: Color(0xFFC9A84C),
-                                  ),
-                                ),
-                              ],
-                            ),
-                            Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                              decoration: BoxDecoration(
-                                color: s["active"] ? const Color(0xFFECFDF5) : const Color(0xFFF5F5F5),
-                                borderRadius: BorderRadius.circular(20),
-                              ),
-                              child: Text(
-                                s["active"] ? "Actif" : "Inactif",
-                                style: TextStyle(
-                                  fontSize: 10,
-                                  fontWeight: FontWeight.bold,
-                                  color: s["active"] ? const Color(0xFF2D9B6F) : const Color(0xFF6B7A99),
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      );
-                    },
-                  ),
+                  if (_isLoadingAnnonces)
+                    const Padding(
+                      padding: EdgeInsets.all(20.0),
+                      child: Center(child: CircularProgressIndicator(color: Color(0xFF0D1F3C))),
+                    )
+                  else if (_myAnnonces.isEmpty)
+                    const Padding(
+                      padding: EdgeInsets.all(20.0),
+                      child: Center(child: Text("Vous n'avez aucune annonce.")),
+                    )
+                  else
+                    ListView.builder(
+                      shrinkWrap: true,
+                      physics: const NeverScrollableScrollPhysics(),
+                      padding: EdgeInsets.zero,
+                      itemCount: _myAnnonces.length,
+                      itemBuilder: (context, index) => _buildAnnonceCard(_myAnnonces[index]),
+                    ),
                 ],
               ),
             ),
@@ -1128,6 +1142,182 @@ class _ProfileScreenState extends State<ProfileScreen> {
       width: 1,
       height: 32,
       color: const Color(0xFFF0F2F7),
+    );
+  }
+
+  // ── Helpers identiques à HomeScreen ──────────────────────────
+  String _categoryEmoji(String? cat) {
+    switch (cat) {
+      case 'plomberie': return '🔧';
+      case 'electricite': return '⚡';
+      case 'nettoyage': return '🧹';
+      case 'cours': return '📚';
+      case 'peinture': return '🎨';
+      case 'livraison': return '🚚';
+      case 'renovation': return '🏗️';
+      default: return '📦';
+    }
+  }
+
+  String _formatPrixLabel(Map<String, dynamic> a) {
+    final type = a['type_paiement']?.toString() ?? '';
+    if (type == 'quote') return 'Sur devis';
+    final prixVal = a['prix'] != null ? double.tryParse(a['prix'].toString()) : null;
+    if (prixVal == null) return 'Sur devis';
+    if (type == 'hourly') return '${prixVal.toStringAsFixed(0)} QAR/heure';
+    return '${prixVal.toStringAsFixed(0)} QAR';
+  }
+
+  bool _isUrgentActive(Map<String, dynamic> a) {
+    if (a['urgent'] != 1 && a['urgent'] != true) return false;
+    final until = a['urgent_until'];
+    if (until == null) return true;
+    try {
+      return DateTime.parse(until.toString()).isAfter(DateTime.now());
+    } catch (_) {
+      return true;
+    }
+  }
+
+  // ── Carte annonce identique à l'accueil ─────────────────────
+  Widget _buildAnnonceCard(Map<String, dynamic> a) {
+    final String titre = a['titre'] ?? '';
+    final String? premierePhoto = a['premiere_photo'];
+    final String emoji = _categoryEmoji(a['categorie']);
+    final String description = a['description'] ?? '';
+    final String ville = a['ville'] ?? '';
+    final String prixLabel = _formatPrixLabel(a);
+    final int nbLikes = a['nb_likes'] ?? 0;
+    final int nbCommentaires = a['nb_commentaires'] ?? 0;
+    final bool isUrgent = _isUrgentActive(a);
+
+    return Card(
+      margin: const EdgeInsets.only(bottom: 14),
+      color: Colors.white,
+      surfaceTintColor: Colors.white,
+      elevation: 1,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+      child: InkWell(
+        onTap: () => widget.onAnnonceTap?.call(a),
+        borderRadius: BorderRadius.circular(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (premierePhoto != null)
+              Stack(
+                children: [
+                  ClipRRect(
+                    borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+                    child: Image.network(premierePhoto, height: 150, width: double.infinity, fit: BoxFit.cover,
+                        errorBuilder: (_, __, ___) => Container(height: 70, color: const Color(0xFFF5F7FA),
+                            alignment: Alignment.center, child: Text(emoji, style: const TextStyle(fontSize: 36)))),
+                  ),
+                  if (isUrgent)
+                    Positioned(
+                      top: 10,
+                      right: 10,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFEF4444),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: const Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(Icons.bolt, color: Colors.white, size: 12),
+                            SizedBox(width: 2),
+                            Text('URGENT', style: TextStyle(color: Colors.white, fontSize: 9, fontWeight: FontWeight.bold)),
+                          ],
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            Padding(
+              padding: const EdgeInsets.all(14),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    if (premierePhoto == null)
+                      Container(width: 42, height: 42,
+                          decoration: BoxDecoration(color: const Color(0xFFF5F7FA), borderRadius: BorderRadius.circular(12)),
+                          alignment: Alignment.center,
+                          child: Text(emoji, style: const TextStyle(fontSize: 22))),
+                    if (premierePhoto == null) const SizedBox(width: 10),
+                    Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                      Text(titre, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: Color(0xFF0D1F3C)),
+                          overflow: TextOverflow.ellipsis),
+                      const SizedBox(height: 4),
+                      if (description.isNotEmpty)
+                        Text(description, maxLines: 2, overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(color: Color(0xFF6B7A99), fontSize: 12, height: 1.4)),
+                      if (ville.isNotEmpty) ...[
+                        const SizedBox(height: 4),
+                        Row(children: [
+                          const Icon(Icons.location_on_outlined, color: Color(0xFFA0ABBE), size: 11),
+                          const SizedBox(width: 2),
+                          Expanded(child: Text(ville, style: const TextStyle(color: Color(0xFFA0ABBE), fontSize: 10),
+                              overflow: TextOverflow.ellipsis)),
+                        ]),
+                      ],
+                    ])),
+                  ]),
+                  const SizedBox(height: 10),
+                  Container(height: 1, color: const Color(0xFFF5F7FA)),
+                  const SizedBox(height: 8),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(prixLabel, style: const TextStyle(color: Color(0xFFC9A84C), fontWeight: FontWeight.bold, fontSize: 15)),
+                      Row(children: [
+                        const Icon(Icons.favorite_border, size: 14, color: Color(0xFFA0ABBE)),
+                        const SizedBox(width: 3),
+                        Text('$nbLikes', style: const TextStyle(color: Color(0xFF6B7A99), fontSize: 12)),
+                        const SizedBox(width: 10),
+                        const Icon(Icons.chat_bubble_outline, size: 14, color: Color(0xFFA0ABBE)),
+                        const SizedBox(width: 3),
+                        Text('$nbCommentaires', style: const TextStyle(color: Color(0xFF6B7A99), fontSize: 12)),
+                      ]),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  Row(children: [
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        onPressed: () => widget.onEditAnnonce?.call(a),
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: const Color(0xFF0D1F3C),
+                          side: const BorderSide(color: Color(0xFF0D1F3C), width: 1.2),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                          padding: const EdgeInsets.symmetric(vertical: 10),
+                        ),
+                        icon: const Icon(Icons.edit_outlined, size: 15),
+                        label: const Text('Modifier', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        onPressed: () => widget.onDeleteAnnonce?.call(int.tryParse(a['id'].toString()) ?? 0),
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: const Color(0xFFEF4444),
+                          side: const BorderSide(color: Color(0xFFEF4444), width: 1.2),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                          padding: const EdgeInsets.symmetric(vertical: 10),
+                        ),
+                        icon: const Icon(Icons.delete_outline, size: 15),
+                        label: const Text('Supprimer', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+                      ),
+                    ),
+                  ]),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 

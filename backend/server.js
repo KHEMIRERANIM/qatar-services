@@ -23,12 +23,48 @@ const authRoutes = require('./src/routes/authRoutes');
 const proRoutes = require('./src/routes/proRoutes');
 const proController = require('./src/controllers/proController');
 const annoncesRoutes = require('./src/routes/annonces');
+const { sendPushNotification } = require('./src/services/notificationService');
 
 // Utilisation des routes
 app.use('/auth', authRoutes);
 app.use('/pro', proRoutes);
 app.use('/api/annonces', annoncesRoutes);
 app.post('/veriff-callback', proController.veriffCallback);
+
+// Fonction pour expirer les annonces de plus de 30 jours et envoyer une notification push
+async function checkExpiredAnnonces(db) {
+  try {
+    const [expiredListings] = await db.query(
+      `SELECT a.id, a.titre, a.user_id, u.fcm_token 
+       FROM annonces a
+       JOIN users u ON a.user_id = u.id
+       WHERE a.statut = 'active' 
+       AND a.created_at < DATE_SUB(NOW(), INTERVAL 30 DAY)`
+    );
+
+    if (expiredListings.length > 0) {
+      console.log(`🔍 Tâche d'expiration : ${expiredListings.length} annonces à traiter.`);
+      for (const annonce of expiredListings) {
+        await db.query("UPDATE annonces SET statut = 'expiree' WHERE id = ?", [annonce.id]);
+        console.log(`🚫 Annonce "${annonce.titre}" (ID: ${annonce.id}) expirée.`);
+
+        if (annonce.fcm_token) {
+          sendPushNotification(
+            annonce.fcm_token,
+            'Votre annonce a expiré ⏰',
+            `Votre annonce "${annonce.titre}" a dépassé la limite de 30 jours et a été archivée.`,
+            {
+              type: 'annonce_expirée',
+              annonceId: String(annonce.id)
+            }
+          );
+        }
+      }
+    }
+  } catch (err) {
+    console.error('❌ Erreur lors de la vérification des annonces expirées:', err.message);
+  }
+}
 
 // Initialisation de la base de données et tâche de nettoyage
 async function initDatabase() {
@@ -61,11 +97,19 @@ async function initDatabase() {
       }
     }, 24 * 60 * 60 * 1000);
 
+    // 4. Lancement du job horaire d'expiration des annonces (chaque 1h)
+    setInterval(() => {
+      checkExpiredAnnonces(db);
+    }, 60 * 60 * 1000);
+
     // Exécuter un nettoyage initial au démarrage
     const [result] = await db.query('DELETE FROM tokens WHERE expire_le < NOW()');
     if (result.affectedRows > 0) {
       console.log(`🧹 Nettoyage initial : ${result.affectedRows} tokens expirés supprimés`);
     }
+
+    // Exécuter la vérification initiale des annonces expirées au démarrage
+    await checkExpiredAnnonces(db);
 
   } catch (error) {
     console.error('❌ Erreur initialisation database:', error.message);

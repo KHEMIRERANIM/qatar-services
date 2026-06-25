@@ -57,7 +57,9 @@ static const String baseUrl = 'http://192.168.1.16:3000';
 
       if (response.statusCode >= 200 && response.statusCode < 300) {
         final token = data['token'] ?? data['access_token'];
+        final rToken = data['refreshToken'] ?? data['refresh_token'];
         if (token != null) await TokenService.saveToken(token.toString());
+        if (rToken != null) await TokenService.saveRefreshToken(rToken.toString());
         return AuthResult(success: true, data: data);
       }
       return AuthResult(
@@ -97,7 +99,9 @@ static const String baseUrl = 'http://192.168.1.16:3000';
 
       if (response.statusCode >= 200 && response.statusCode < 300) {
         final token = data['token'] ?? data['access_token'];
+        final rToken = data['refreshToken'] ?? data['refresh_token'];
         if (token != null) await TokenService.saveToken(token.toString());
+        if (rToken != null) await TokenService.saveRefreshToken(rToken.toString());
         return AuthResult(success: true, data: data);
       }
       // Traduction des messages d'erreur backend en messages lisibles
@@ -136,6 +140,32 @@ static const String baseUrl = 'http://192.168.1.16:3000';
     await TokenService.clearAll();
   }
 
+  // POST /auth/refresh
+  static Future<String?> refreshAccessToken() async {
+    final refreshToken = await TokenService.getRefreshToken();
+    if (refreshToken == null) return null;
+
+    try {
+      final response = await http
+          .post(
+            Uri.parse('$baseUrl/auth/refresh'),
+            headers: _headers,
+            body: jsonEncode({'refreshToken': refreshToken}),
+          )
+          .timeout(_timeout);
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body) as Map<String, dynamic>;
+        final newToken = data['token'];
+        if (newToken != null) {
+          await TokenService.saveToken(newToken.toString());
+          return newToken.toString();
+        }
+      }
+    } catch (_) {}
+    return null;
+  }
+
   // GET /auth/profile
   static Future<AuthResult> getProfile() async {
     final token = await TokenService.getToken();
@@ -144,14 +174,21 @@ static const String baseUrl = 'http://192.168.1.16:3000';
           success: false, message: 'Non authentifié', tokenExpired: true);
     }
     try {
-      final response = await http
+      var response = await http
           .get(Uri.parse('$baseUrl/auth/profile'), headers: _authHeaders(token))
           .timeout(_timeout);
 
       if (response.statusCode == 401 || response.statusCode == 403) {
-        await TokenService.clearAll();
-        return AuthResult(
-            success: false, message: 'Session expirée', tokenExpired: true);
+        final newToken = await refreshAccessToken();
+        if (newToken != null) {
+          response = await http
+              .get(Uri.parse('$baseUrl/auth/profile'), headers: _authHeaders(newToken))
+              .timeout(_timeout);
+        } else {
+          await TokenService.clearAll();
+          return AuthResult(
+              success: false, message: 'Session expirée', tokenExpired: true);
+        }
       }
       final data = jsonDecode(response.body) as Map<String, dynamic>;
       if (response.statusCode == 200) return AuthResult(success: true, data: data);
@@ -169,7 +206,7 @@ static const String baseUrl = 'http://192.168.1.16:3000';
           success: false, message: 'Non authentifié', tokenExpired: true);
     }
     try {
-      final response = await http
+      var response = await http
           .put(
             Uri.parse('$baseUrl/auth/profile/update'),
             headers: _authHeaders(token),
@@ -178,9 +215,20 @@ static const String baseUrl = 'http://192.168.1.16:3000';
           .timeout(_timeout);
 
       if (response.statusCode == 401 || response.statusCode == 403) {
-        await TokenService.clearAll();
-        return AuthResult(
-            success: false, message: 'Session expirée', tokenExpired: true);
+        final newToken = await refreshAccessToken();
+        if (newToken != null) {
+          response = await http
+              .put(
+                Uri.parse('$baseUrl/auth/profile/update'),
+                headers: _authHeaders(newToken),
+                body: jsonEncode(profileData),
+              )
+              .timeout(_timeout);
+        } else {
+          await TokenService.clearAll();
+          return AuthResult(
+              success: false, message: 'Session expirée', tokenExpired: true);
+        }
       }
       final data = jsonDecode(response.body) as Map<String, dynamic>;
       if (response.statusCode == 200) return AuthResult(success: true, data: data);
@@ -199,17 +247,35 @@ static const String baseUrl = 'http://192.168.1.16:3000';
       return AuthResult(success: false, message: 'Non authentifié', tokenExpired: true);
     }
     try {
-      final request = http.MultipartRequest(
+      var request = http.MultipartRequest(
         'POST',
         Uri.parse('$baseUrl/auth/profile/photo'),
       );
       request.headers['Authorization'] = 'Bearer $token';
       request.files.add(await http.MultipartFile.fromPath('photo', imageFile.path));
 
-      final streamedResponse = await request.send().timeout(_timeout);
-      final response = await http.Response.fromStream(streamedResponse);
-      final data = jsonDecode(response.body) as Map<String, dynamic>;
+      var streamedResponse = await request.send().timeout(_timeout);
+      var response = await http.Response.fromStream(streamedResponse);
 
+      if (response.statusCode == 401 || response.statusCode == 403) {
+        final newToken = await refreshAccessToken();
+        if (newToken != null) {
+          request = http.MultipartRequest(
+            'POST',
+            Uri.parse('$baseUrl/auth/profile/photo'),
+          );
+          request.headers['Authorization'] = 'Bearer $newToken';
+          request.files.add(await http.MultipartFile.fromPath('photo', imageFile.path));
+          streamedResponse = await request.send().timeout(_timeout);
+          response = await http.Response.fromStream(streamedResponse);
+        } else {
+          await TokenService.clearAll();
+          return AuthResult(
+              success: false, message: 'Session expirée', tokenExpired: true);
+        }
+      }
+
+      final data = jsonDecode(response.body) as Map<String, dynamic>;
       if (response.statusCode == 200) {
         return AuthResult(success: true, data: data);
       }
@@ -229,7 +295,7 @@ static const String baseUrl = 'http://192.168.1.16:3000';
           success: false, message: 'Non authentifié', tokenExpired: true);
     }
     try {
-      final response = await http
+      var response = await http
           .post(
             Uri.parse('$baseUrl/auth/verify-email'),
             headers: _authHeaders(token),
@@ -237,9 +303,19 @@ static const String baseUrl = 'http://192.168.1.16:3000';
           .timeout(_timeout);
 
       if (response.statusCode == 401 || response.statusCode == 403) {
-        await TokenService.clearAll();
-        return AuthResult(
-            success: false, message: 'Session expirée', tokenExpired: true);
+        final newToken = await refreshAccessToken();
+        if (newToken != null) {
+          response = await http
+              .post(
+                Uri.parse('$baseUrl/auth/verify-email'),
+                headers: _authHeaders(newToken),
+              )
+              .timeout(_timeout);
+        } else {
+          await TokenService.clearAll();
+          return AuthResult(
+              success: false, message: 'Session expirée', tokenExpired: true);
+        }
       }
       final data = jsonDecode(response.body) as Map<String, dynamic>;
       if (response.statusCode == 200) return AuthResult(success: true, data: data);
@@ -281,7 +357,9 @@ static const String baseUrl = 'http://192.168.1.16:3000';
 
       if (response.statusCode >= 200 && response.statusCode < 300) {
         final token = data['token'] ?? data['access_token'];
+        final rToken = data['refreshToken'] ?? data['refresh_token'];
         if (token != null) await TokenService.saveToken(token.toString());
+        if (rToken != null) await TokenService.saveRefreshToken(rToken.toString());
         return AuthResult(success: true, data: data);
       }
       return AuthResult(success: false, message: data['message'] ?? 'Connexion sociale échouée');
@@ -381,7 +459,9 @@ static const String baseUrl = 'http://192.168.1.16:3000';
 
       if (response.statusCode >= 200 && response.statusCode < 300) {
         final token = data['token'] ?? data['access_token'];
+        final rToken = data['refreshToken'] ?? data['refresh_token'];
         if (token != null) await TokenService.saveToken(token.toString());
+        if (rToken != null) await TokenService.saveRefreshToken(rToken.toString());
         return AuthResult(success: true, data: data);
       }
       return AuthResult(
