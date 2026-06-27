@@ -121,6 +121,32 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
+  Color _categoryColor(String? cat) {
+    switch (cat) {
+      case 'plomberie': return const Color(0xFF1565C0);
+      case 'electricite': return const Color(0xFFF57F17);
+      case 'nettoyage': return const Color(0xFF2E7D32);
+      case 'cours': return const Color(0xFF6A1B9A);
+      case 'peinture': return const Color(0xFFAD1457);
+      case 'livraison': return const Color(0xFF558B2F);
+      case 'renovation': return const Color(0xFF00838F);
+      default: return const Color(0xFF0D1F3C);
+    }
+  }
+
+  List<Color> _categoryGradient(String? cat) {
+    switch (cat) {
+      case 'plomberie': return [const Color(0xFF1565C0), const Color(0xFF1E88E5)];
+      case 'electricite': return [const Color(0xFFF57F17), const Color(0xFFFFA726)];
+      case 'nettoyage': return [const Color(0xFF2E7D32), const Color(0xFF43A047)];
+      case 'cours': return [const Color(0xFF6A1B9A), const Color(0xFF8E24AA)];
+      case 'peinture': return [const Color(0xFFAD1457), const Color(0xFFE91E63)];
+      case 'livraison': return [const Color(0xFF558B2F), const Color(0xFF7CB342)];
+      case 'renovation': return [const Color(0xFF00838F), const Color(0xFF00ACC1)];
+      default: return [const Color(0xFF0D1F3C), const Color(0xFF1A3560)];
+    }
+  }
+
   String _normalizePricingType(Map<String, dynamic> a) {
     final type = a['type_paiement']?.toString() ?? '';
     if (['hourly', 'fixed', 'quote'].contains(type)) return type;
@@ -1312,120 +1338,210 @@ class _HomeScreenState extends State<HomeScreen> {
     final String titre = a['titre'] ?? '';
     final String? premierePhoto = a['premiere_photo'];
     final String emoji = _categoryEmoji(a['categorie']);
-    final String description = a['description'] ?? '';
+    final String categorie = a['categorie'] ?? '';
+    final Color catColor = _categoryColor(a['categorie']);
+    final List<Color> catGrad = _categoryGradient(a['categorie']);
+    final String ville = a['ville'] ?? '';
     final String prixLabel = _formatPrixLabel(a);
     final int nbLikes = a['nb_likes'] ?? 0;
     final int nbCommentaires = a['nb_commentaires'] ?? 0;
     final bool isUrgent = _isUrgentActive(a);
+    final String typePublication = (a['type_publication'] ?? 'OFFRE').toString().toUpperCase();
 
-    return Card(
-      margin: const EdgeInsets.only(bottom: 14),
-      color: Colors.white,
-      surfaceTintColor: Colors.white,
-      elevation: 1,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-      child: InkWell(
-        onTap: () => _showOffreProposeeDetails(a, fromMineTab: true),
-        borderRadius: BorderRadius.circular(20),
+    return GestureDetector(
+      onTap: () => _showOffreProposeeDetails(a, fromMineTab: true),
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 14),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(20),
+          color: Colors.white,
+          boxShadow: [
+            BoxShadow(color: const Color(0xFF0D1F3C).withOpacity(0.08), blurRadius: 16, offset: const Offset(0, 2)),
+          ],
+        ),
+        clipBehavior: Clip.hardEdge,
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-          if (premierePhoto != null)
-            Stack(
-              children: [
-                ClipRRect(
-                  borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
-                  child: Image.network(premierePhoto, height: 150, width: double.infinity, fit: BoxFit.cover,
-                      errorBuilder: (_, __, ___) => Container(height: 70, color: const Color(0xFFF5F7FA),
-                          alignment: Alignment.center, child: Text(emoji, style: const TextStyle(fontSize: 36)))),
-                ),
-                if (isUrgent)
-                  Positioned(top: 10, right: 10, child: _buildUrgentBadge()),
-              ],
-            ),
-          Padding(
-            padding: const EdgeInsets.all(14),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(children: [
-                  if (premierePhoto == null)
-                    Container(width: 42, height: 42,
-                        decoration: BoxDecoration(color: const Color(0xFFF5F7FA), borderRadius: BorderRadius.circular(12)),
-                        alignment: Alignment.center,
-                        child: Text(emoji, style: const TextStyle(fontSize: 22))),
-                  if (premierePhoto == null) const SizedBox(width: 10),
-                  Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                    Text(titre, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: Color(0xFF0D1F3C)),
-                        overflow: TextOverflow.ellipsis),
-                    if (description.isNotEmpty)
-                      Text(description, maxLines: 2, overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(color: Color(0xFF6B7A99), fontSize: 12, height: 1.4)),
-                  ])),
-                ]),
-                const SizedBox(height: 10),
-                Container(height: 1, color: const Color(0xFFF5F7FA)),
-                const SizedBox(height: 10),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Text(prixLabel, style: const TextStyle(color: Color(0xFFC9A84C), fontWeight: FontWeight.bold, fontSize: 15)),
-                    Row(children: [
-                      const Icon(Icons.favorite_border, size: 14, color: Color(0xFFA0ABBE)),
-                      const SizedBox(width: 3),
-                      GestureDetector(
-                        onTap: nbLikes > 0
-                            ? () {
-                                final id = int.tryParse(a['id'].toString()) ?? 0;
-                                _openLikesForAnnonce(id);
-                              }
-                            : null,
-                        child: Text('$nbLikes',
-                            style: TextStyle(
-                                color: nbLikes > 0 ? const Color(0xFF0D1F3C) : const Color(0xFF6B7A99),
-                                fontSize: 12,
-                                fontWeight: nbLikes > 0 ? FontWeight.w600 : FontWeight.normal)),
+            // ── Photo / placeholder ──
+            SizedBox(
+              height: 200,
+              width: double.infinity,
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  // Image ou fond dégradé catégorie
+                  if (premierePhoto != null)
+                    Image.network(premierePhoto, fit: BoxFit.cover,
+                        errorBuilder: (_, __, ___) => Container(
+                          decoration: BoxDecoration(
+                            gradient: LinearGradient(colors: catGrad, begin: Alignment.topLeft, end: Alignment.bottomRight),
+                          ),
+                          alignment: Alignment.center,
+                          child: Text(emoji, style: const TextStyle(fontSize: 60)),
+                        ))
+                  else
+                    Container(
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(colors: catGrad, begin: Alignment.topLeft, end: Alignment.bottomRight),
                       ),
-                      const SizedBox(width: 10),
-                      const Icon(Icons.chat_bubble_outline, size: 14, color: Color(0xFFA0ABBE)),
-                      const SizedBox(width: 3),
-                      Text('$nbCommentaires', style: const TextStyle(color: Color(0xFF6B7A99), fontSize: 12)),
-                    ]),
-                  ],
-                ),
-                const SizedBox(height: 12),
-                // Boutons actions CRUD
-                Row(children: [
-                  Expanded(
-                    child: OutlinedButton.icon(
-                      onPressed: () => _showEditModal(a),
-                      style: OutlinedButton.styleFrom(
-                        foregroundColor: const Color(0xFF0D1F3C),
-                        side: const BorderSide(color: Color(0xFF0D1F3C), width: 1.2),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                        padding: const EdgeInsets.symmetric(vertical: 10),
+                      alignment: Alignment.center,
+                      child: Text(emoji, style: const TextStyle(fontSize: 60)),
+                    ),
+                  // Gradient overlay bas
+                  Container(
+                    decoration: const BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topCenter, end: Alignment.bottomCenter,
+                        colors: [Colors.transparent, Color(0x99000000)],
+                        stops: [0.5, 1.0],
                       ),
-                      icon: const Icon(Icons.edit_outlined, size: 15),
-                      label: const Text('Modifier', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
                     ),
                   ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: OutlinedButton.icon(
-                      onPressed: () => _deleteAnnonce(a['id']),
-                      style: OutlinedButton.styleFrom(
-                        foregroundColor: const Color(0xFFEF4444),
-                        side: const BorderSide(color: Color(0xFFEF4444), width: 1.2),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                        padding: const EdgeInsets.symmetric(vertical: 10),
+                  // Badge type haut droite
+                  Positioned(
+                    top: 12, right: 12,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                      decoration: BoxDecoration(
+                        color: typePublication == 'OFFRE' ? const Color(0xFF0D1F3C) : const Color(0xFF2D9B6F),
+                        borderRadius: BorderRadius.circular(20),
                       ),
-                      icon: const Icon(Icons.delete_outline, size: 15),
-                      label: const Text('Supprimer', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+                      child: Text(
+                        typePublication == 'OFFRE' ? '📢 OFFRE' : '🔍 DEMANDE',
+                        style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold),
+                      ),
                     ),
                   ),
-                ]),
-              ],
+                  // Bas photo : avatar + nom + bouton CRUD hint
+                  Positioned(
+                    bottom: 12, left: 12, right: 12,
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Row(children: [
+                          Container(
+                            width: 30, height: 30,
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              border: Border.all(color: const Color(0xFFC9A84C), width: 2),
+                              color: const Color(0xFFE8EDF5),
+                            ),
+                            child: const Icon(Icons.person, size: 16, color: Color(0xFF6B7A99)),
+                          ),
+                          const SizedBox(width: 8),
+                          const Text('Mon annonce',
+                              style: TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w600,
+                                  shadows: [Shadow(blurRadius: 4)])),
+                        ]),
+                        if (isUrgent)
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                            decoration: BoxDecoration(color: const Color(0xFFEF4444), borderRadius: BorderRadius.circular(12)),
+                            child: const Text('⚡ URGENT',
+                                style: TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold)),
+                          ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
             ),
+            // ── Corps ──
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // Badges catégorie
+                  Row(children: [
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
+                      decoration: BoxDecoration(
+                        color: catColor.withOpacity(0.1),
+                        borderRadius: BorderRadius.circular(20),
+                      ),
+                      child: Text('$emoji $categorie',
+                          style: TextStyle(color: catColor, fontSize: 11, fontWeight: FontWeight.w600)),
+                    ),
+                  ]),
+                  const SizedBox(height: 8),
+                  // Titre
+                  Text(titre,
+                      style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: Color(0xFF0D1F3C)),
+                      maxLines: 2, overflow: TextOverflow.ellipsis),
+                  const SizedBox(height: 6),
+                // Localisation + date
+                if (ville.isNotEmpty)
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(Icons.location_on_outlined, size: 13, color: Color(0xFF9AAAC0)),
+                      const SizedBox(width: 3),
+                      Text(ville, style: const TextStyle(color: Color(0xFF9AAAC0), fontSize: 12)),
+                    ],
+                  ),
+                const SizedBox(height: 10),
+                  // Prix + interactions
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(prixLabel,
+                          style: const TextStyle(color: Color(0xFFC9A84C), fontWeight: FontWeight.bold, fontSize: 15)),
+                      Row(children: [
+                        GestureDetector(
+                          onTap: nbLikes > 0 ? () => _openLikesForAnnonce(int.tryParse(a['id'].toString()) ?? 0) : null,
+                          child: Row(children: [
+                            const Text('🤍', style: TextStyle(fontSize: 14)),
+                            const SizedBox(width: 3),
+                            Text('$nbLikes',
+                                style: TextStyle(
+                                    color: nbLikes > 0 ? const Color(0xFF0D1F3C) : const Color(0xFF9AAAC0),
+                                    fontSize: 12, fontWeight: nbLikes > 0 ? FontWeight.w600 : FontWeight.normal)),
+                          ]),
+                        ),
+                        const SizedBox(width: 12),
+                        Row(children: [
+                          const Text('💬', style: TextStyle(fontSize: 14)),
+                          const SizedBox(width: 3),
+                          Text('$nbCommentaires', style: const TextStyle(color: Color(0xFF9AAAC0), fontSize: 12)),
+                        ]),
+                      ]),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  // Boutons CRUD
+                  Row(children: [
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        onPressed: () => _showEditModal(a),
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: const Color(0xFF0D1F3C),
+                          side: const BorderSide(color: Color(0xFF0D1F3C), width: 1.2),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                          padding: const EdgeInsets.symmetric(vertical: 10),
+                        ),
+                        icon: const Icon(Icons.edit_outlined, size: 15),
+                        label: const Text('Modifier', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        onPressed: () => _deleteAnnonce(a['id']),
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: const Color(0xFFEF4444),
+                          side: const BorderSide(color: Color(0xFFEF4444), width: 1.2),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                          padding: const EdgeInsets.symmetric(vertical: 10),
+                        ),
+                        icon: const Icon(Icons.delete_outline, size: 15),
+                        label: const Text('Supprimer', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+                      ),
+                    ),
+                  ]),
+                ],
+              ),
             ),
           ],
         ),
@@ -1433,102 +1549,220 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  // ── CARTE "OFFRES PROPOSÉES" (avec Like + Tap pour détails) ─
+  // ── CARTE "OFFRES PROPOSÉES" (nouveau design FeedCard) ─────
   Widget _buildProposedOfferCard(Map<String, dynamic> a) {
     final String titre = a['titre'] ?? '';
     final String nomUser = a['nom_user'] ?? 'Inconnu';
     final String? avatarUser = a['avatar_user'];
+    final String? telUser = a['tel_user'];
     final String? premierePhoto = a['premiere_photo'];
     final String emoji = _categoryEmoji(a['categorie']);
-    final String description = a['description'] ?? '';
+    final String categorie = a['categorie'] ?? '';
+    final Color catColor = _categoryColor(a['categorie']);
+    final List<Color> catGrad = _categoryGradient(a['categorie']);
     final String ville = a['ville'] ?? '';
     final String prixLabel = _formatPrixLabel(a);
     final int nbLikes = a['nb_likes'] ?? 0;
+    final int nbCommentaires = a['nb_commentaires'] ?? 0;
     final bool isUrgent = _isUrgentActive(a);
+    final String typePublication = (a['type_publication'] ?? 'OFFRE').toString().toUpperCase();
+    final String? postedAt = a['created_at']?.toString();
 
-    return Card(
-      margin: const EdgeInsets.only(bottom: 14),
-      color: Colors.white,
-      surfaceTintColor: Colors.white,
-      elevation: 1,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-      child: InkWell(
-        onTap: () => _showOffreProposeeDetails(a, fromMineTab: false),
-        borderRadius: BorderRadius.circular(20),
+    String _shortDate(String? raw) {
+      if (raw == null) return '';
+      try {
+        final dt = DateTime.parse(raw).toLocal();
+        final now = DateTime.now();
+        final diff = now.difference(dt);
+        if (diff.inMinutes < 60) return 'Il y a ${diff.inMinutes} min';
+        if (diff.inHours < 24) return 'Il y a ${diff.inHours}h';
+        if (diff.inDays < 7) return 'Il y a ${diff.inDays}j';
+        return '${dt.day}/${dt.month}/${dt.year}';
+      } catch (_) { return ''; }
+    }
+
+    return GestureDetector(
+      onTap: () => _showOffreProposeeDetails(a, fromMineTab: false),
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 14),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(20),
+          color: Colors.white,
+          boxShadow: [
+            BoxShadow(color: const Color(0xFF0D1F3C).withOpacity(0.08), blurRadius: 16, offset: const Offset(0, 2)),
+          ],
+        ),
+        clipBehavior: Clip.hardEdge,
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            if (premierePhoto != null)
-              Stack(
+            // ── Photo / placeholder ──
+            SizedBox(
+              height: 200,
+              width: double.infinity,
+              child: Stack(
+                fit: StackFit.expand,
                 children: [
-                  ClipRRect(
-                    borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
-                    child: Image.network(premierePhoto, height: 150, width: double.infinity, fit: BoxFit.cover,
-                        errorBuilder: (_, __, ___) => Container(height: 70, color: const Color(0xFFF5F7FA),
-                            alignment: Alignment.center, child: Text(emoji, style: const TextStyle(fontSize: 36)))),
+                  // Image ou fond dégradé
+                  if (premierePhoto != null)
+                    Image.network(premierePhoto, fit: BoxFit.cover,
+                        errorBuilder: (_, __, ___) => Container(
+                          decoration: BoxDecoration(
+                            gradient: LinearGradient(colors: catGrad, begin: Alignment.topLeft, end: Alignment.bottomRight),
+                          ),
+                          alignment: Alignment.center,
+                          child: Text(emoji, style: const TextStyle(fontSize: 60)),
+                        ))
+                  else
+                    Container(
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(colors: catGrad, begin: Alignment.topLeft, end: Alignment.bottomRight),
+                      ),
+                      alignment: Alignment.center,
+                      child: Text(emoji, style: const TextStyle(fontSize: 60)),
+                    ),
+                  // Gradient overlay bas
+                  Container(
+                    decoration: const BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topCenter, end: Alignment.bottomCenter,
+                        colors: [Colors.transparent, Color(0x99000000)],
+                        stops: [0.5, 1.0],
+                      ),
+                    ),
                   ),
-                  if (isUrgent)
-                    Positioned(top: 10, right: 10, child: _buildUrgentBadge()),
+                  // Badge OFFRE / DEMANDE
+                  Positioned(
+                    top: 12, right: 12,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                      decoration: BoxDecoration(
+                        color: typePublication == 'OFFRE' ? const Color(0xFF0D1F3C) : const Color(0xFF2D9B6F),
+                        borderRadius: BorderRadius.circular(20),
+                      ),
+                      child: Text(
+                        typePublication == 'OFFRE' ? '📢 OFFRE' : '🔍 DEMANDE',
+                        style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold),
+                      ),
+                    ),
+                  ),
+                  // Avatar + Nom + bouton Contacter
+                  Positioned(
+                    bottom: 12, left: 12, right: 12,
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Row(children: [
+                          Container(
+                            width: 30, height: 30,
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              border: Border.all(color: const Color(0xFFC9A84C), width: 2),
+                            ),
+                            child: ClipOval(
+                              child: avatarUser != null
+                                  ? Image.network(avatarUser, fit: BoxFit.cover,
+                                      errorBuilder: (_, __, ___) => const Icon(Icons.person, size: 16, color: Color(0xFF6B7A99)))
+                                  : const Icon(Icons.person, size: 16, color: Color(0xFF6B7A99)),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Text(nomUser,
+                              style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w600,
+                                  shadows: [Shadow(blurRadius: 4)])),
+                        ]),
+                        GestureDetector(
+                          onTap: () {
+                            _showContactOptions(nomUser, telUser);
+                          },
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFC9A84C),
+                              borderRadius: BorderRadius.circular(20),
+                            ),
+                            child: const Text('Contacter',
+                                style: TextStyle(color: Color(0xFF0D1F3C), fontSize: 11, fontWeight: FontWeight.bold)),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
                 ],
               ),
+            ),
+            // ── Corps ──
             Padding(
-              padding: const EdgeInsets.all(14),
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 14),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                    if (premierePhoto == null)
-                      Container(width: 42, height: 42,
-                          decoration: BoxDecoration(color: const Color(0xFFF5F7FA), borderRadius: BorderRadius.circular(12)),
-                          alignment: Alignment.center,
-                          child: Text(emoji, style: const TextStyle(fontSize: 22))),
-                    if (premierePhoto == null) const SizedBox(width: 10),
-                    Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                      Text(titre, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: Color(0xFF0D1F3C)),
-                          overflow: TextOverflow.ellipsis),
-                      const SizedBox(height: 4),
-                      if (description.isNotEmpty)
-                        Text(description, maxLines: 2, overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(color: Color(0xFF6B7A99), fontSize: 12, height: 1.4)),
-                      const SizedBox(height: 4),
-                      Row(children: [
-                        CircleAvatar(radius: 9, backgroundColor: const Color(0xFFE8EDF5),
-                            backgroundImage: avatarUser != null ? NetworkImage(avatarUser) : null,
-                            child: avatarUser == null ? const Icon(Icons.person, size: 11, color: Color(0xFF6B7A99)) : null),
-                        const SizedBox(width: 5),
-                        Text(nomUser, style: const TextStyle(color: Color(0xFF6B7A99), fontSize: 11)),
-                        if (ville.isNotEmpty) ...[
-                          const SizedBox(width: 6),
-                          const Icon(Icons.location_on_outlined, color: Color(0xFFA0ABBE), size: 11),
-                          Expanded(child: Text(ville, style: const TextStyle(color: Color(0xFFA0ABBE), fontSize: 10),
-                              overflow: TextOverflow.ellipsis)),
-                        ],
-                      ]),
-                    ])),
+                  // Badges catégorie + URGENT
+                  Row(children: [
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
+                      decoration: BoxDecoration(
+                        color: catColor.withOpacity(0.1),
+                        borderRadius: BorderRadius.circular(20),
+                      ),
+                      child: Text('$emoji $categorie',
+                          style: TextStyle(color: catColor, fontSize: 11, fontWeight: FontWeight.w600)),
+                    ),
+                    if (isUrgent) ...[
+                      const SizedBox(width: 8),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFFFF3E0),
+                          borderRadius: BorderRadius.circular(20),
+                        ),
+                        child: const Text('⚡ URGENT',
+                            style: TextStyle(color: Color(0xFFE65100), fontSize: 11, fontWeight: FontWeight.bold)),
+                      ),
+                    ],
                   ]),
-                  const SizedBox(height: 10),
-                  Container(height: 1, color: const Color(0xFFF5F7FA)),
                   const SizedBox(height: 8),
+                  // Titre
+                  Text(titre,
+                      style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: Color(0xFF0D1F3C)),
+                      maxLines: 2, overflow: TextOverflow.ellipsis),
+                  const SizedBox(height: 6),
+                  // Localisation + date
+               Row(children: [
+                 if (ville.isNotEmpty) ...[
+                   const Icon(Icons.location_on_outlined, size: 13, color: Color(0xFF9AAAC0)),
+                   const SizedBox(width: 3),
+                   Text(ville, style: const TextStyle(color: Color(0xFF9AAAC0), fontSize: 12)),
+                   const SizedBox(width: 12),
+                 ],
+                 if (postedAt != null)
+                   Text(_shortDate(postedAt), style: const TextStyle(color: Color(0xFF9AAAC0), fontSize: 12)),
+               ]),
+                  const SizedBox(height: 10),
+                  // Prix + interactions
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      Text(prixLabel, style: const TextStyle(color: Color(0xFFC9A84C), fontWeight: FontWeight.bold, fontSize: 15)),
+                      Text(prixLabel,
+                          style: const TextStyle(color: Color(0xFFC9A84C), fontWeight: FontWeight.bold, fontSize: 15)),
                       Row(children: [
-                        const Icon(Icons.favorite_border, size: 14, color: Color(0xFFA0ABBE)),
-                        const SizedBox(width: 3),
                         GestureDetector(
-                          onTap: nbLikes > 0
-                              ? () {
-                                  final id = int.tryParse(a['id'].toString()) ?? 0;
-                                  _openLikesForAnnonce(id);
-                                }
-                              : null,
-                          child: Text('$nbLikes',
-                              style: TextStyle(
-                                  color: nbLikes > 0 ? const Color(0xFF0D1F3C) : const Color(0xFF6B7A99),
-                                  fontSize: 12,
-                                  fontWeight: nbLikes > 0 ? FontWeight.w600 : FontWeight.normal)),
+                          onTap: nbLikes > 0 ? () => _openLikesForAnnonce(int.tryParse(a['id'].toString()) ?? 0) : null,
+                          child: Row(children: [
+                            const Text('🤍', style: TextStyle(fontSize: 14)),
+                            const SizedBox(width: 3),
+                            Text('$nbLikes',
+                                style: TextStyle(
+                                    color: nbLikes > 0 ? const Color(0xFF0D1F3C) : const Color(0xFF9AAAC0),
+                                    fontSize: 12, fontWeight: nbLikes > 0 ? FontWeight.w600 : FontWeight.normal)),
+                          ]),
                         ),
+                        const SizedBox(width: 12),
+                        Row(children: [
+                          const Text('💬', style: TextStyle(fontSize: 14)),
+                          const SizedBox(width: 3),
+                          Text('$nbCommentaires', style: const TextStyle(color: Color(0xFF9AAAC0), fontSize: 12)),
+                        ]),
                       ]),
                     ],
                   ),

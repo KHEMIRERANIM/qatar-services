@@ -85,6 +85,9 @@ class AnnonceService {
     List<String>? photos,
     String? typePaiement,
     bool urgent = false,
+    String? typePublication,
+    double? budgetMax,
+    String? disponibilite,
   }) async {
     try {
       final headers = await _authHeaders();
@@ -97,6 +100,9 @@ class AnnonceService {
         if (photos != null && photos.isNotEmpty) 'photos': photos,
         if (typePaiement != null) 'type_paiement': typePaiement,
         'urgent': urgent,
+        if (typePublication != null) 'type_publication': typePublication,
+        if (budgetMax != null) 'budget_max': budgetMax,
+        if (disponibilite != null) 'disponibilite': disponibilite,
       };
       final response = await http
           .post(Uri.parse('$baseUrl/api/annonces'),

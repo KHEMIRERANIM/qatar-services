@@ -44,6 +44,9 @@ exports.getFeed = async (req, res) => {
         a.urgent_until,
         a.statut,
         a.created_at,
+        a.type_publication,
+        a.budget_max,
+        a.disponibilite,
         (SELECT url FROM annonce_photos WHERE annonce_id = a.id ORDER BY ordre ASC, id ASC LIMIT 1) AS premiere_photo,
         (SELECT COUNT(*) FROM annonce_photos WHERE annonce_id = a.id) AS nb_photos,
         (SELECT COUNT(*) FROM annonce_likes WHERE annonce_id = a.id) AS nb_likes,
@@ -121,7 +124,7 @@ exports.getFeed = async (req, res) => {
 // POST /api/annonces - Créer une annonce (authentifié)
 exports.createAnnonce = async (req, res) => {
   try {
-    const { titre, description, categorie, prix, ville, photos, type_paiement, urgent } = req.body;
+    const { titre, description, categorie, prix, ville, photos, type_paiement, urgent, type_publication, budget_max, disponibilite } = req.body;
 
     if (!titre || !description) {
       return res.status(400).json({ success: false, message: 'Le titre et la description sont requis.' });
@@ -133,9 +136,9 @@ exports.createAnnonce = async (req, res) => {
 
     // Insérer l'annonce
     const [result] = await db.query(
-      `INSERT INTO annonces (user_id, titre, description, categorie, prix, ville, type_paiement, urgent, urgent_until, statut) 
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ${isUrgent ? 'DATE_ADD(NOW(), INTERVAL 3 DAY)' : 'NULL'}, 'active')`,
-      [req.user.id, titre, description, categorie || null, finalPrix, ville || null, pricingType, isUrgent ? 1 : 0]
+      `INSERT INTO annonces (user_id, titre, description, categorie, prix, ville, type_paiement, urgent, urgent_until, statut, type_publication, budget_max, disponibilite) 
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ${isUrgent ? 'DATE_ADD(NOW(), INTERVAL 3 DAY)' : 'NULL'}, 'active', ?, ?, ?)`,
+      [req.user.id, titre, description, categorie || null, finalPrix, ville || null, pricingType, isUrgent ? 1 : 0, type_publication || 'offre', budget_max || null, disponibilite || null]
     );
 
     const annonceId = result.insertId;
@@ -170,6 +173,7 @@ exports.getDetail = async (req, res) => {
     const [annonces] = await db.query(
       `SELECT 
         a.id, a.user_id, a.titre, a.description, a.categorie, a.prix, a.ville, a.type_paiement, a.urgent, a.urgent_until, a.statut, a.created_at,
+        a.type_publication, a.budget_max, a.disponibilite,
         CONCAT(u.prenom, ' ', u.nom) AS nom_user,
         u.photo AS avatar_user
        FROM annonces a
@@ -251,7 +255,7 @@ exports.getDetail = async (req, res) => {
 exports.updateAnnonce = async (req, res) => {
   try {
     const { id } = req.params;
-    const { titre, description, categorie, prix, ville, statut, type_paiement, urgent } = req.body;
+    const { titre, description, categorie, prix, ville, statut, type_paiement, urgent, type_publication, budget_max, disponibilite } = req.body;
 
     // Vérifier l'annonce
     const [annonces] = await db.query("SELECT user_id FROM annonces WHERE id = ?", [id]);
@@ -290,6 +294,10 @@ exports.updateAnnonce = async (req, res) => {
       updates.push('prix = ?');
       params.push(prix);
     }
+
+    if (type_publication !== undefined) { updates.push('type_publication = ?'); params.push(type_publication); }
+    if (budget_max !== undefined) { updates.push('budget_max = ?'); params.push(budget_max); }
+    if (disponibilite !== undefined) { updates.push('disponibilite = ?'); params.push(disponibilite); }
 
     if (urgent !== undefined) {
       const isUrgent = urgent === true || urgent === 1 || urgent === '1';
