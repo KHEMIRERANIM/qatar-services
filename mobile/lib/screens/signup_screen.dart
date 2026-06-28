@@ -24,6 +24,10 @@ class _SignupScreenState extends State<SignupScreen> {
   final _phoneController = TextEditingController();
   final _passwordController = TextEditingController();
   final _confirmController = TextEditingController();
+  String? _selectedVille;
+  int _selectedDay = 1;
+  int _selectedMonth = 1;
+  int _selectedYear = 2000;
 
   String _selectedCountryCode = '+974';
   bool _showPassword = false;
@@ -39,8 +43,8 @@ class _SignupScreenState extends State<SignupScreen> {
     _emailController.dispose();
     _phoneController.dispose();
     _passwordController.dispose();
-    _confirmController.dispose();
-    super.dispose();
+   _confirmController.dispose();
+   super.dispose();
   }
 
   bool _validate() {
@@ -120,15 +124,16 @@ class _SignupScreenState extends State<SignupScreen> {
     }
 
     // 2. Inscription sur le backend Node.js (Base de données principale)
-    final result = await AuthService.register({
-      'prenom': _firstNameController.text.trim(),
-      'nom': _lastNameController.text.trim(),
-      'email': _emailController.text.trim(),
-      'telephone': '$_selectedCountryCode${_phoneController.text.trim()}',
-      'mot_de_passe': _passwordController.text,
-      'role': 'pro',
-    });
-
+ final result = await AuthService.register({
+   'prenom': _firstNameController.text.trim(),
+   'nom': _lastNameController.text.trim(),
+   'email': _emailController.text.trim(),
+   'telephone': '$_selectedCountryCode${_phoneController.text.trim()}',
+   'mot_de_passe': _passwordController.text,
+ 'ville': _selectedVille ?? '',
+   'date_naissance': '${_selectedYear.toString().padLeft(4, '0')}-${_selectedMonth.toString().padLeft(2, '0')}-${_selectedDay.toString().padLeft(2, '0')}',
+   'role': 'pro',
+ });
     if (!mounted) return;
     setState(() => _isLoading = false);
 
@@ -418,9 +423,11 @@ class _SignupScreenState extends State<SignupScreen> {
                       controller: _emailController,
                       keyboardType: TextInputType.emailAddress,
                     ),
-                    _buildPhoneField(),
-                    _buildField(
-                      key: "password",
+                   _buildPhoneField(),
+                   _buildVilleDropdown(),
+                   _buildDateNaissanceSelector(),
+                   _buildField(
+                     key: "password",
                       label: "Mot de passe",
                       placeholder: "Minimum 6 caractères",
                       icon: Icons.lock_outline,
@@ -718,6 +725,134 @@ class _SignupScreenState extends State<SignupScreen> {
               style: const TextStyle(fontSize: 11, color: Color(0xFFEF4444)),
             ),
           ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildVilleDropdown() {
+    final hasError = _errors['ville'] != null;
+    final villes = ['Doha', 'Al Rayyan', 'Al Wakrah', 'Umm Salal', 'Al Khor', 'Al Daayen', 'Al Shahaniya', 'Al Shamal'];
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 14),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          const Text("Ville (Qatar)",
+              style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Color(0xFF0D1F3C))),
+          const SizedBox(height: 6),
+          Container(
+            height: 50,
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(
+                color: hasError ? const Color(0xFFEF4444) : const Color(0xFF0D1F3C).withOpacity(0.12),
+              ),
+            ),
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: Row(
+              children: [
+                const Icon(Icons.location_on_outlined, color: Color(0xFF6B7A99), size: 17),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: DropdownButtonHideUnderline(
+                    child: DropdownButton<String>(
+                      value: _selectedVille,
+                      isExpanded: true,
+                      hint: const Text("Sélectionnez votre ville", style: TextStyle(color: Color(0xFFA0ABBE), fontSize: 14)),
+                      icon: const Icon(Icons.keyboard_arrow_down, size: 18, color: Color(0xFF6B7A99)),
+                      style: const TextStyle(fontSize: 14, color: Color(0xFF0D1F3C)),
+                      onChanged: (String? newValue) {
+                        setState(() { _selectedVille = newValue; });
+                      },
+                      items: villes.map<DropdownMenuItem<String>>((String v) {
+                        return DropdownMenuItem<String>(value: v, child: Text(v));
+                      }).toList(),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          if (hasError) ...[
+            const SizedBox(height: 4),
+            Text(_errors['ville']!, style: const TextStyle(fontSize: 11, color: Color(0xFFEF4444))),
+          ],
+        ],
+      ),
+    );
+  }
+
+  String _formatDate() {
+    return '${_selectedDay.toString().padLeft(2, '0')}/${_selectedMonth.toString().padLeft(2, '0')}/$_selectedYear';
+  }
+
+  Future<void> _pickDate() async {
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: DateTime(_selectedYear, _selectedMonth, _selectedDay),
+      firstDate: DateTime(1920),
+      lastDate: DateTime.now(),
+      builder: (context, child) {
+        return Theme(
+          data: Theme.of(context).copyWith(
+            colorScheme: const ColorScheme.light(
+              primary: Color(0xFF0D1F3C),
+              onPrimary: Colors.white,
+              surface: Colors.white,
+              onSurface: Color(0xFF0D1F3C),
+            ),
+          ),
+          child: child!,
+        );
+      },
+    );
+    if (picked != null) {
+      setState(() {
+        _selectedDay = picked.day;
+        _selectedMonth = picked.month;
+        _selectedYear = picked.year;
+      });
+    }
+  }
+
+  Widget _buildDateNaissanceSelector() {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 14),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          const Text(
+            "Date de naissance",
+            style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Color(0xFF0D1F3C)),
+          ),
+          const SizedBox(height: 6),
+          GestureDetector(
+            onTap: _pickDate,
+            child: Container(
+              height: 50,
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: const Color(0xFF0D1F3C).withOpacity(0.12)),
+              ),
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: Row(
+                children: [
+                  const Icon(Icons.cake_outlined, color: Color(0xFF6B7A99), size: 17),
+                  const SizedBox(width: 12),
+                  Text(
+                    _formatDate(),
+                    style: const TextStyle(fontSize: 14, color: Color(0xFF0D1F3C)),
+                  ),
+                  const Spacer(),
+                  const Icon(Icons.calendar_today_outlined, color: Color(0xFF6B7A99), size: 16),
+                ],
+              ),
+            ),
+          ),
         ],
       ),
     );

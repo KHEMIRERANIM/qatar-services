@@ -9,8 +9,9 @@ const cloudinary = require('../config/cloudinary')
 // ═══════════════════════════
 exports.register = async (req, res) => {
   try {
-    const { prenom, nom, email,
-            telephone, mot_de_passe } = req.body
+const { prenom, nom, email,
+        telephone, mot_de_passe,
+        date_naissance, ville } = req.body
 
     // Validation champs obligatoires
     if (!prenom || !nom || !email || 
@@ -53,13 +54,13 @@ exports.register = async (req, res) => {
     const hashedPassword = await bcrypt.hash(mot_de_passe, 10)
 
     // Créer utilisateur
-    const uuid = uuidv4()
-    await db.query(
-      `INSERT INTO users
-       (uuid, prenom, nom, email, telephone, mot_de_passe, statut)
-       VALUES (?, ?, ?, ?, ?, ?, 'inactif')`,
-      [uuid, prenom, nom, email, telephone, hashedPassword, 'inactif']
-    )
+  const uuid = uuidv4()
+      await db.query(
+        `INSERT INTO users
+         (uuid, prenom, nom, email, telephone, mot_de_passe, date_naissance, ville, statut)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'inactif')`,
+        [uuid, prenom, nom, email, telephone, hashedPassword, date_naissance || null, ville || null, 'inactif']
+      )
 
     res.status(201).json({
       message: 'Compte créé avec succès'
@@ -191,12 +192,11 @@ exports.profile = async (req, res) => {
   try {
     const [users] = await db.query(
       `SELECT uuid, prenom, nom, email,
-       telephone, photo, statut,
+       telephone, photo, date_naissance, ville, statut,
        created_at
        FROM users WHERE id = ?`,
       [req.user.id]
     )
-
     const [prestataires] = await db.query(
       'SELECT statut_verification, badge_verifie FROM prestataires WHERE user_id = ?',
       [req.user.id]
@@ -324,7 +324,7 @@ exports.logout = async (req, res) => {
 // UPDATE — PROFIL
 exports.updateProfile = async (req, res) => {
   try {
-    const { prenom, nom, email, telephone, photo } = req.body
+    const { prenom, nom, email, telephone, photo, date_naissance, ville } = req.body
 
     // Simple validations
     if (email) {
@@ -362,8 +362,10 @@ exports.updateProfile = async (req, res) => {
     if (email !== undefined) { fieldsToUpdate.push('email = ?'); params.push(email); }
     if (telephone !== undefined) { fieldsToUpdate.push('telephone = ?'); params.push(telephone); }
     if (photo !== undefined) { fieldsToUpdate.push('photo = ?'); params.push(photo); }
+        if (date_naissance !== undefined) { fieldsToUpdate.push('date_naissance = ?'); params.push(date_naissance); }
+        if (ville !== undefined) { fieldsToUpdate.push('ville = ?'); params.push(ville); }
 
-    if (fieldsToUpdate.length === 0) {
+        if (fieldsToUpdate.length === 0) {
       return res.status(400).json({ message: 'Aucun champ à modifier' })
     }
 
@@ -375,10 +377,10 @@ exports.updateProfile = async (req, res) => {
     )
 
     // Return the updated user info
-    const [users] = await db.query(
-      'SELECT uuid, prenom, nom, email, telephone, photo, statut FROM users WHERE id = ?',
-      [req.user.id]
-    )
+  const [users] = await db.query(
+        'SELECT uuid, prenom, nom, email, telephone, photo, date_naissance, ville, statut FROM users WHERE id = ?',
+        [req.user.id]
+      )
 
     res.json({
       message: 'Profil mis à jour avec succès',
@@ -761,5 +763,71 @@ exports.refreshToken = async (req, res) => {
 
   } catch (error) {
     res.status(500).json({ message: error.message })
+  }
+}
+
+// ═══════════════════════════
+// READ — AVIS PAR CATÉGORIE (offres du user connecté)
+// ═══════════════════════════
+exports.getMyAvisStats = async (req, res) => {
+  try {
+    const userId = req.user.id
+
+    const [globalStats] = await db.query(
+      `SELECT
+        ROUND(AVG(c.note), 1) AS note_globale,
+        COUNT(c.id) AS nb_avis_total
+       FROM commentaires c
+       JOIN annonces a ON a.id = c.annonce_id
+       WHERE a.user_id = ?
+         AND c.type = 'avis'
+         AND a.type_publication = 'offre'
+         AND c.note IS NOT NULL`,
+      [userId]
+    )
+
+    const [parCategorie] = await db.query(
+      `SELECT
+        a.categorie,
+        ROUND(AVG(c.note), 1) AS note,
+        COUNT(c.id) AS nb_avis
+       FROM commentaires c
+       JOIN annonces a ON a.id = c.annonce_id
+       WHERE a.user_id = ?
+         AND c.type = 'avis'
+         AND a.type_publication = 'offre'
+         AND c.note IS NOT NULL
+         AND a.categorie IS NOT NULL
+         AND a.categorie != ''
+       GROUP BY a.categorie
+       ORDER BY nb_avis DESC`,
+      [userId]
+    )
+const [avisRecents] = await db.query(
+  `SELECT
+    c.id, c.contenu, c.note, c.created_at,
+    CONCAT(u.prenom, ' ', u.nom) AS nom_user,
+    u.photo AS avatar_user,
+    a.categorie, a.titre
+   FROM commentaires c
+   JOIN annonces a ON a.id = c.annonce_id
+   JOIN users u ON u.id = c.user_id
+   WHERE a.user_id = ?
+     AND c.type = 'avis'
+     AND a.type_publication = 'offre'
+   ORDER BY c.created_at DESC
+   LIMIT 20`,
+  [userId]
+)
+
+    res.json({
+      success: true,
+      note_globale: globalStats[0]?.note_globale ?? null,
+      nb_avis_total: Number(globalStats[0]?.nb_avis_total ?? 0),
+      par_categorie: parCategorie,
+      avis_recents: avisRecents,
+    })
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message })
   }
 }

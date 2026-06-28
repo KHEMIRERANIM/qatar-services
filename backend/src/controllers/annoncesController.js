@@ -50,7 +50,8 @@ exports.getFeed = async (req, res) => {
         (SELECT url FROM annonce_photos WHERE annonce_id = a.id ORDER BY ordre ASC, id ASC LIMIT 1) AS premiere_photo,
         (SELECT COUNT(*) FROM annonce_photos WHERE annonce_id = a.id) AS nb_photos,
         (SELECT COUNT(*) FROM annonce_likes WHERE annonce_id = a.id) AS nb_likes,
-        (SELECT COUNT(*) FROM commentaires WHERE annonce_id = a.id) AS nb_commentaires,
+        (SELECT COUNT(*) FROM commentaires WHERE annonce_id = a.id AND type != 'avis' AND type != 'reponse') AS nb_commentaires,
+        (SELECT COUNT(*) FROM commentaires WHERE annonce_id = a.id AND type = 'avis') AS nb_avis,
         CONCAT(u.prenom, ' ', u.nom) AS nom_user,
         u.photo AS avatar_user,
         u.telephone AS tel_user
@@ -193,11 +194,10 @@ exports.getDetail = async (req, res) => {
       "SELECT id, url, ordre FROM annonce_photos WHERE annonce_id = ? ORDER BY ordre ASC, id ASC",
       [id]
     );
-
-    // 3. Récupérer les commentaires
+    // 3. Récupérer les commentaires (tous types : commentaire, avis, reponse)
     const [commentaires] = await db.query(
       `SELECT 
-        c.id, c.user_id, c.contenu, c.type, c.created_at,
+        c.id, c.user_id, c.contenu, c.type, c.note, c.parent_id, c.created_at,
         CONCAT(u.prenom, ' ', u.nom) AS nom_user,
         u.photo AS avatar_user,
         u.telephone AS tel_user
@@ -224,14 +224,22 @@ exports.getDetail = async (req, res) => {
     const is_owner = req.user ? (Number(req.user.id) === Number(annonce.user_id)) : false;
     const is_liked = req.user ? likes.some(l => Number(l.user_id) === Number(req.user.id)) : false;
 
-    // Commentaires : visibles par le propriétaire + l'auteur de chaque commentaire
+    // Filtrer et séparer par type
     const currentUserId = req.user ? Number(req.user.id) : null;
+    
+    // Commentaires classiques privés (visibles seulement propriétaire + auteur)
     const filteredCommentaires = commentaires.filter(c => {
       const type = c.type || 'commentaire';
       if (type !== 'commentaire') return false;
       if (currentUserId === null) return false;
       return currentUserId === Number(annonce.user_id) || currentUserId === Number(c.user_id);
     });
+
+    // Les avis (publics)
+    const avis = commentaires.filter(c => c.type === 'avis');
+
+    // Les réponses aux avis (publiques)
+    const reponses = commentaires.filter(c => c.type === 'reponse');
 
     res.json({
       success: true,
@@ -241,6 +249,8 @@ exports.getDetail = async (req, res) => {
         is_liked,
         photos,
         commentaires: filteredCommentaires,
+        avis: avis,
+        reponses: reponses,
         likes_count: likes.length,
         likes
       }
@@ -489,7 +499,7 @@ exports.toggleLike = async (req, res) => {
 exports.addCommentaire = async (req, res) => {
   try {
     const { id } = req.params;
-    const { contenu, type } = req.body;
+    const { contenu, type = 'commentaire', note, parent_id } = req.body;
     const userId = req.user.id;
 
     if (!contenu || contenu.trim() === '') {
@@ -508,14 +518,31 @@ exports.addCommentaire = async (req, res) => {
 
     const annonce = annonces[0];
 
-    if (Number(annonce.user_id) === Number(userId)) {
+    // Vérifications spéciales si c'est un avis ou une réponse
+    if (type === 'commentaire' && Number(annonce.user_id) === Number(userId)) {
       return res.status(403).json({ success: false, message: 'Vous ne pouvez pas commenter votre propre annonce.' });
     }
 
-    // 2. Insérer le commentaire (type commentaire uniquement)
+    if (type === 'avis' && Number(annonce.user_id) === Number(userId)) {
+      return res.status(403).json({ success: false, message: 'Vous ne pouvez pas laisser un avis sur votre propre annonce.' });
+    }
+
+    if (type === 'avis' && annonce.type_publication === 'demande') {
+      return res.status(403).json({ success: false, message: 'Les demandes ne reçoivent pas d\'avis.' });
+    }
+    if (type === 'reponse') {
+      if (Number(annonce.user_id) !== Number(userId)) {
+        return res.status(403).json({ success: false, message: 'Seul le propriétaire de l\'annonce peut répondre aux avis.' });
+      }
+      if (!parent_id) {
+        return res.status(400).json({ success: false, message: 'ID de l\'avis parent requis pour répondre.' });
+      }
+    }
+
+    // 2. Insérer le commentaire
     const [result] = await db.query(
-      "INSERT INTO commentaires (annonce_id, user_id, contenu, type) VALUES (?, ?, ?, ?)",
-      [id, userId, contenu, 'commentaire']
+      "INSERT INTO commentaires (annonce_id, user_id, contenu, type, note, parent_id) VALUES (?, ?, ?, ?, ?, ?)",
+      [id, userId, contenu, type, note || null, parent_id || null]
     );
 
     const commentId = result.insertId;
@@ -523,7 +550,7 @@ exports.addCommentaire = async (req, res) => {
     // 3. Récupérer les informations du commentaire inséré pour la réponse
     const [newComments] = await db.query(
       `SELECT 
-        c.id, c.user_id, c.contenu, c.type, c.created_at,
+        c.id, c.user_id, c.contenu, c.type, c.note, c.parent_id, c.created_at,
         CONCAT(u.prenom, ' ', u.nom) AS nom_user,
         u.photo AS avatar_user,
         u.telephone AS tel_user
@@ -535,24 +562,24 @@ exports.addCommentaire = async (req, res) => {
 
     const insertedComment = newComments[0];
 
-    // 4. Envoyer la notification Firebase au propriétaire si ce n'est pas lui qui commente
+    // 4. Envoyer la notification Firebase au propriétaire si ce n'est pas lui qui écrit
     if (annonce.user_id !== userId) {
       try {
-        // Obtenir le token FCM du propriétaire
         const [owners] = await db.query("SELECT fcm_token FROM users WHERE id = ?", [annonce.user_id]);
         
         if (owners.length > 0 && owners[0].fcm_token) {
           const commenterName = insertedComment.nom_user || 'Un utilisateur';
-          const notificationTitle = 'Nouveau commentaire 💬';
-          const notificationBody = `${commenterName} a écrit sur votre annonce "${annonce.titre}" : "${contenu.length > 40 ? contenu.substring(0, 40) + '...' : contenu}"`;
+          let notificationTitle = 'Nouveau commentaire 💬';
+          if (type === 'avis') notificationTitle = 'Nouvel avis reçu ⭐';
+          
+          const notificationBody = `${commenterName} a écrit : "${contenu.length > 40 ? contenu.substring(0, 40) + '...' : contenu}"`;
 
-          // Appel asynchrone sans bloquer la requête HTTP principale
           sendPushNotification(
             owners[0].fcm_token,
             notificationTitle,
             notificationBody,
             {
-              type: 'comment',
+              type: type,
               annonceId: String(id),
               commentId: String(commentId)
             }
@@ -565,7 +592,7 @@ exports.addCommentaire = async (req, res) => {
 
     res.status(201).json({
       success: true,
-      message: 'Commentaire ajouté avec succès.',
+      message: 'Opération réussie.',
       data: insertedComment
     });
 
@@ -588,20 +615,25 @@ exports.deleteCommentaire = async (req, res) => {
     const annonce = annonces[0];
 
     // 2. Vérifier si le commentaire existe
-    const [commentaires] = await db.query("SELECT user_id FROM commentaires WHERE id = ? AND annonce_id = ?", [cid, id]);
+    const [commentaires] = await db.query("SELECT id, user_id, type FROM commentaires WHERE id = ? AND annonce_id = ?", [cid, id]);
     if (commentaires.length === 0) {
       return res.status(404).json({ success: false, message: 'Commentaire introuvable pour cette annonce.' });
     }
 
-    // 3. Vérifier l'autorisation : seul le propriétaire de l'annonce peut supprimer
-    if (annonce.user_id !== req.user.id) {
-      return res.status(403).json({ success: false, message: 'Action non autorisée. Seul le propriétaire de l\'annonce peut supprimer les commentaires.' });
+    const commentaire = commentaires[0];
+
+    // 3. Vérifier l'autorisation : seul le propriétaire de l'annonce, ou l'auteur du commentaire, peut supprimer
+    if (annonce.user_id !== req.user.id && commentaire.user_id !== req.user.id) {
+      return res.status(403).json({ success: false, message: 'Action non autorisée.' });
     }
 
-    // 4. Supprimer le commentaire
+    // 4. Supprimer le commentaire et les réponses enfants si c'est un avis
+    if (commentaire.type === 'avis') {
+      await db.query("DELETE FROM commentaires WHERE parent_id = ?", [cid]);
+    }
     await db.query("DELETE FROM commentaires WHERE id = ?", [cid]);
 
-    res.json({ success: true, message: 'Commentaire supprimé avec succès.' });
+    res.json({ success: true, message: 'Élément supprimé avec succès.' });
 
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });

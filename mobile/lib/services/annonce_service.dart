@@ -211,16 +211,28 @@ class AnnonceService {
   }
 
   // POST /api/annonces/:id/commentaires
-  static Future<AnnonceResult> addCommentaire(int annonceId, String contenu, String type) async {
+  static Future<AnnonceResult> addCommentaire(
+    int annonceId,
+    String contenu,
+    String type, {
+    int? note,
+    int? parentId,
+  }) async {
     try {
       final token = await TokenService.getToken();
       if (token == null || token.isEmpty) {
         return AnnonceResult(success: false, message: 'Connectez-vous pour commenter.');
       }
       final headers = await _authHeaders();
+      final body = {
+        'contenu': contenu,
+        'type': type,
+        if (note != null) 'note': note,
+        if (parentId != null) 'parent_id': parentId,
+      };
       final response = await http
           .post(Uri.parse('$baseUrl/api/annonces/$annonceId/commentaires'),
-              headers: headers, body: jsonEncode({'contenu': contenu, 'type': type}))
+              headers: headers, body: jsonEncode(body))
           .timeout(_timeout);
       Map<String, dynamic> data = {};
       try {

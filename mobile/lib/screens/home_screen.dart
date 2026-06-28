@@ -153,14 +153,22 @@ class _HomeScreenState extends State<HomeScreen> {
     return a['prix'] == null ? 'quote' : 'fixed';
   }
 
-  String _formatPrixLabel(Map<String, dynamic> a) {
-    final type = _normalizePricingType(a);
-    if (type == 'quote') return 'Sur devis';
-    final prixVal = a['prix'] != null ? double.tryParse(a['prix'].toString()) : null;
-    if (prixVal == null) return 'Sur devis';
-    if (type == 'hourly') return '${prixVal.toStringAsFixed(0)} QAR/heure';
-    return '${prixVal.toStringAsFixed(0)} QAR';
-  }
+ String _formatPrixLabel(Map<String, dynamic> a) {
+     print('>>> type_publication: ${a['type_publication']}  budget_max: ${a['budget_max']}');
+
+     final typePublication = (a['type_publication'] ?? 'offre').toString();
+     if (typePublication == 'demande') {
+       final budgetVal = a['budget_max'] != null ? double.tryParse(a['budget_max'].toString()) : null;
+       if (budgetVal == null) return 'Budget non défini';
+       return 'Budget: ${budgetVal.toStringAsFixed(0)} QAR';
+     }
+     final type = _normalizePricingType(a);
+     if (type == 'quote') return 'Sur devis';
+     final prixVal = a['prix'] != null ? double.tryParse(a['prix'].toString()) : null;
+     if (prixVal == null) return 'Sur devis';
+     if (type == 'hourly') return '${prixVal.toStringAsFixed(0)} QAR/heure';
+     return '${prixVal.toStringAsFixed(0)} QAR';
+   }
 
   bool _isUrgentActive(Map<String, dynamic> a) {
     if (a['urgent'] != 1 && a['urgent'] != true) return false;
@@ -375,15 +383,35 @@ class _HomeScreenState extends State<HomeScreen> {
     bool urgent = _isUrgentActive(annonce);
     List<Map<String, dynamic>> existingPhotos = [];
 
+    // Déterminer le type de publication
+    final typePublication = (annonce['type_publication'] ?? 'offre').toString();
+    final isOffre = typePublication == 'offre';
+
+    // Champs spécifiques aux demandes
+    final budgetMaxCtrl = TextEditingController(
+        text: annonce['budget_max'] != null ? annonce['budget_max'].toString() : '');
+    final disponibiliteCtrl = TextEditingController(
+        text: annonce['disponibilite'] ?? '');
+
+    // Catégorie sélectionnée
+    String? selectedCategory = annonce['categorie']?.toString();
+
     final detailRes = await AnnonceService.getDetail(annonceId);
     if (detailRes.success && detailRes.data != null) {
       final det = detailRes.data as Map<String, dynamic>;
-      existingPhotos = List<Map<String, dynamic>>.from(det['photos'] ?? []);
+      if (isOffre) {
+        existingPhotos = List<Map<String, dynamic>>.from(det['photos'] ?? []);
+      }
       selectedPricingType = _normalizePricingType(det);
       urgent = _isUrgentActive(det);
-      if (det['prix'] != null) {
-        prixCtrl.text = det['prix'].toString();
+      if (det['prix'] != null) prixCtrl.text = det['prix'].toString();
+      if (det['budget_max'] != null && budgetMaxCtrl.text.isEmpty) {
+        budgetMaxCtrl.text = det['budget_max'].toString();
       }
+      if (det['disponibilite'] != null && disponibiliteCtrl.text.isEmpty) {
+        disponibiliteCtrl.text = det['disponibilite'].toString();
+      }
+      if (det['categorie'] != null) selectedCategory = det['categorie'].toString();
     }
 
     if (!mounted) return;
@@ -437,116 +465,219 @@ class _HomeScreenState extends State<HomeScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
+                // ── Titre du modal ──
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    const Text('Modifier l\'offre',
-                        style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Color(0xFF0D1F3C))),
-                    IconButton(onPressed: () => Navigator.pop(ctx), icon: const Icon(Icons.close, color: Color(0xFF6B7A99))),
+                    Text(
+                      isOffre ? 'Modifier l\'offre' : 'Modifier la demande',
+                      style: const TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold,
+                          color: Color(0xFF0D1F3C)),
+                    ),
+                    IconButton(
+                        onPressed: () => Navigator.pop(ctx),
+                        icon: const Icon(Icons.close, color: Color(0xFF6B7A99))),
                   ],
                 ),
                 const SizedBox(height: 14),
-                const Text('Photos', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Color(0xFF0D1F3C))),
-                const SizedBox(height: 8),
-                Row(
-                  children: [
-                    if (existingPhotos.length < 2)
-                      InkWell(
-                        onTap: () => pickAndUploadPhoto(setSheet),
-                        borderRadius: BorderRadius.circular(12),
-                        child: Container(
-                          width: 72,
-                          height: 72,
-                          decoration: BoxDecoration(
-                            color: const Color(0xFFC9A84C).withOpacity(0.05),
-                            borderRadius: BorderRadius.circular(12),
-                            border: Border.all(color: const Color(0xFFC9A84C).withOpacity(0.5), width: 2),
-                          ),
-                          child: const Icon(Icons.add_a_photo_outlined, color: Color(0xFFC9A84C), size: 22),
-                        ),
-                      ),
-                    ...existingPhotos.map((p) {
-                      final photoId = int.tryParse(p['id'].toString()) ?? 0;
-                      return Padding(
-                        padding: const EdgeInsets.only(left: 10),
-                        child: Stack(
-                          clipBehavior: Clip.none,
-                          children: [
-                            ClipRRect(
+
+                // ── Photos (Offre uniquement) ──
+                if (isOffre) ...[
+                  const Text('Photos',
+                      style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                          color: Color(0xFF0D1F3C))),
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      if (existingPhotos.length < 2)
+                        InkWell(
+                          onTap: () => pickAndUploadPhoto(setSheet),
+                          borderRadius: BorderRadius.circular(12),
+                          child: Container(
+                            width: 72,
+                            height: 72,
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFC9A84C).withOpacity(0.05),
                               borderRadius: BorderRadius.circular(12),
-                              child: Image.network(p['url'], width: 72, height: 72, fit: BoxFit.cover),
+                              border: Border.all(
+                                  color: const Color(0xFFC9A84C).withOpacity(0.5),
+                                  width: 2),
                             ),
-                            Positioned(
-                              right: -6,
-                              top: -6,
-                              child: GestureDetector(
-                                onTap: () async {
-                                  if (photoId == 0) return;
-                                  final delRes = await AnnonceService.deletePhoto(annonceId, photoId);
-                                  if (!mounted) return;
-                                  if (delRes.success) {
-                                    setSheet(() => existingPhotos.removeWhere((e) => e['id'] == p['id']));
-                                  }
-                                },
-                                child: Container(
-                                  padding: const EdgeInsets.all(2),
-                                  decoration: const BoxDecoration(color: Color(0xFFEF4444), shape: BoxShape.circle),
-                                  child: const Icon(Icons.close, color: Colors.white, size: 12),
+                            child: const Icon(Icons.add_a_photo_outlined,
+                                color: Color(0xFFC9A84C), size: 22),
+                          ),
+                        ),
+                      ...existingPhotos.map((p) {
+                        final photoId = int.tryParse(p['id'].toString()) ?? 0;
+                        return Padding(
+                          padding: const EdgeInsets.only(left: 10),
+                          child: Stack(
+                            clipBehavior: Clip.none,
+                            children: [
+                              ClipRRect(
+                                borderRadius: BorderRadius.circular(12),
+                                child: Image.network(p['url'],
+                                    width: 72, height: 72, fit: BoxFit.cover),
+                              ),
+                              Positioned(
+                                right: -6,
+                                top: -6,
+                                child: GestureDetector(
+                                  onTap: () async {
+                                    if (photoId == 0) return;
+                                    final delRes = await AnnonceService
+                                        .deletePhoto(annonceId, photoId);
+                                    if (!mounted) return;
+                                    if (delRes.success) {
+                                      setSheet(() => existingPhotos
+                                          .removeWhere((e) => e['id'] == p['id']));
+                                    }
+                                  },
+                                  child: Container(
+                                    padding: const EdgeInsets.all(2),
+                                    decoration: const BoxDecoration(
+                                        color: Color(0xFFEF4444),
+                                        shape: BoxShape.circle),
+                                    child: const Icon(Icons.close,
+                                        color: Colors.white, size: 12),
+                                  ),
                                 ),
                               ),
-                            ),
-                          ],
-                        ),
-                      );
-                    }),
-                  ],
-                ),
-                const SizedBox(height: 14),
+                            ],
+                          ),
+                        );
+                      }),
+                    ],
+                  ),
+                  const SizedBox(height: 14),
+                ],
+
+                // ── Titre ──
                 _editField('Titre', titreCtrl),
                 const SizedBox(height: 10),
-                _editField('Description', descCtrl, maxLines: 3),
+
+                // ── Description ──
+                _editField(
+                  isOffre ? 'Description' : 'Description du besoin',
+                  descCtrl,
+                  maxLines: 3,
+                ),
                 const SizedBox(height: 10),
-                const Text('Type de tarification',
-                    style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Color(0xFF0D1F3C))),
+
+                // ── Catégorie ──
+                const Text('Catégorie',
+                    style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: Color(0xFF0D1F3C))),
                 const SizedBox(height: 6),
-                Row(
-                  children: pricingTypes.map((pt) {
-                    final isSelected = selectedPricingType == pt.id;
-                    return Expanded(
-                      child: Padding(
-                        padding: EdgeInsets.only(right: pt.id != 'quote' ? 6.0 : 0.0),
-                        child: InkWell(
-                          onTap: () => setSheet(() => selectedPricingType = pt.id),
-                          borderRadius: BorderRadius.circular(10),
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(vertical: 8),
-                            decoration: BoxDecoration(
-                              color: isSelected ? const Color(0xFFFFFBEB) : const Color(0xFFF5F7FA),
-                              borderRadius: BorderRadius.circular(10),
-                              border: Border.all(
-                                color: isSelected ? const Color(0xFFC9A84C) : const Color(0xFFE8EDF5),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFF5F7FA),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(
+                        color: const Color(0xFF0D1F3C).withValues(alpha: 0.08)),
+                  ),
+                  child: DropdownButton<String>(
+                    value: categories.any((c) => c.id == selectedCategory)
+                        ? selectedCategory
+                        : null,
+                    isExpanded: true,
+                    underline: const SizedBox.shrink(),
+                    hint: const Text('Choisir une catégorie',
+                        style: TextStyle(color: Color(0xFFA0ABBE), fontSize: 14)),
+                    items: categories
+                        .map((c) => DropdownMenuItem(
+                              value: c.id,
+                              child: Text('${c.emoji} ${c.label}',
+                                  style: const TextStyle(fontSize: 14)),
+                            ))
+                        .toList(),
+                    onChanged: (v) => setSheet(() => selectedCategory = v),
+                  ),
+                ),
+                const SizedBox(height: 10),
+
+                // ── Type de tarification (Offre uniquement) ──
+                if (isOffre) ...[
+                  const Text('Type de tarification',
+                      style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                          color: Color(0xFF0D1F3C))),
+                  const SizedBox(height: 6),
+                  Row(
+                    children: pricingTypes.map((pt) {
+                      final isSelected = selectedPricingType == pt.id;
+                      return Expanded(
+                        child: Padding(
+                          padding: EdgeInsets.only(
+                              right: pt.id != 'quote' ? 6.0 : 0.0),
+                          child: InkWell(
+                            onTap: () =>
+                                setSheet(() => selectedPricingType = pt.id),
+                            borderRadius: BorderRadius.circular(10),
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(vertical: 8),
+                              decoration: BoxDecoration(
+                                color: isSelected
+                                    ? const Color(0xFFFFFBEB)
+                                    : const Color(0xFFF5F7FA),
+                                borderRadius: BorderRadius.circular(10),
+                                border: Border.all(
+                                  color: isSelected
+                                      ? const Color(0xFFC9A84C)
+                                      : const Color(0xFFE8EDF5),
+                                ),
                               ),
+                              child: Text(pt.label,
+                                  textAlign: TextAlign.center,
+                                  style: TextStyle(
+                                    fontSize: 10,
+                                    fontWeight: FontWeight.bold,
+                                    color: isSelected
+                                        ? const Color(0xFFC9A84C)
+                                        : const Color(0xFF6B7A99),
+                                  )),
                             ),
-                            child: Text(pt.label,
-                                textAlign: TextAlign.center,
-                                style: TextStyle(
-                                  fontSize: 10,
-                                  fontWeight: FontWeight.bold,
-                                  color: isSelected ? const Color(0xFFC9A84C) : const Color(0xFF6B7A99),
-                                )),
                           ),
                         ),
-                      ),
-                    );
-                  }).toList(),
-                ),
-                if (selectedPricingType != 'quote') ...[
+                      );
+                    }).toList(),
+                  ),
+                  if (selectedPricingType != 'quote') ...[
+                    const SizedBox(height: 10),
+                    _editField('Prix (QAR)', prixCtrl,
+                        keyboardType: TextInputType.number),
+                  ],
                   const SizedBox(height: 10),
-                  _editField('Prix (QAR)', prixCtrl, keyboardType: TextInputType.number),
                 ],
-                const SizedBox(height: 10),
-                _editField('Ville', villeCtrl),
+
+                // ── Budget maximum (Demande uniquement) ──
+                if (!isOffre) ...[
+                  _editField('Budget maximum (QAR)', budgetMaxCtrl,
+                      keyboardType: TextInputType.number),
+                  const SizedBox(height: 10),
+                ],
+
+                // ── Disponibilité souhaitée (Demande uniquement) ──
+                if (!isOffre) ...[
+                  _editField('Disponibilité souhaitée', disponibiliteCtrl),
+                  const SizedBox(height: 10),
+                ],
+
+                // ── Zone / Ville ──
+                _editField(
+                    isOffre ? 'Zone d\'intervention' : 'Zone souhaitée',
+                    villeCtrl),
                 const SizedBox(height: 12),
+
+                // ── Urgent ──
                 Container(
                   padding: const EdgeInsets.all(12),
                   decoration: BoxDecoration(
@@ -556,13 +687,19 @@ class _HomeScreenState extends State<HomeScreen> {
                   child: Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      const Column(
+                      Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Text('Annonce urgente',
-                              style: TextStyle(fontWeight: FontWeight.bold, color: Color(0xFF0D1F3C), fontSize: 13)),
-                          Text('Mise en avant 3 jours',
-                              style: TextStyle(color: Color(0xFF6B7A99), fontSize: 11)),
+                          Text(
+                            isOffre ? 'Annonce urgente' : 'Demande urgente',
+                            style: const TextStyle(
+                                fontWeight: FontWeight.bold,
+                                color: Color(0xFF0D1F3C),
+                                fontSize: 13),
+                          ),
+                          const Text('Mise en avant 3 jours',
+                              style: TextStyle(
+                                  color: Color(0xFF6B7A99), fontSize: 11)),
                         ],
                       ),
                       Switch(
@@ -574,49 +711,81 @@ class _HomeScreenState extends State<HomeScreen> {
                   ),
                 ),
                 const SizedBox(height: 20),
+
+                // ── Bouton Enregistrer ──
                 ElevatedButton(
-                  onPressed: saving ? null : () async {
-                    setSheet(() => saving = true);
-                    final fields = <String, dynamic>{
-                      if (titreCtrl.text.trim().isNotEmpty) 'titre': titreCtrl.text.trim(),
-                      if (descCtrl.text.trim().isNotEmpty) 'description': descCtrl.text.trim(),
-                      'type_paiement': selectedPricingType,
-                      'urgent': urgent,
-                      if (villeCtrl.text.trim().isNotEmpty) 'ville': villeCtrl.text.trim(),
-                    };
-                    if (selectedPricingType != 'quote') {
-                      fields['prix'] = double.tryParse(prixCtrl.text);
-                    }
-                    final res = await AnnonceService.updateAnnonce(annonceId, fields);
-                    setSheet(() => saving = false);
-                    if (!mounted) return;
-                    Navigator.pop(ctx);
-                    if (res.success) {
-                      _loadFeed(reset: true);
-                      if (_profileKey.currentState != null) {
-                        _profileKey.currentState!.loadMyAnnonces();
-                      }
-                      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-                        content: Text('Offre modifiée avec succès'),
-                        backgroundColor: Color(0xFF2D9B6F),
-                        behavior: SnackBarBehavior.floating,
-                      ));
-                    } else {
-                      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-                        content: Text(res.message ?? 'Erreur'),
-                        backgroundColor: const Color(0xFFEF4444),
-                        behavior: SnackBarBehavior.floating,
-                      ));
-                    }
-                  },
+                  onPressed: saving
+                      ? null
+                      : () async {
+                          setSheet(() => saving = true);
+                          final fields = <String, dynamic>{
+                            if (titreCtrl.text.trim().isNotEmpty)
+                              'titre': titreCtrl.text.trim(),
+                            if (descCtrl.text.trim().isNotEmpty)
+                              'description': descCtrl.text.trim(),
+                            'urgent': urgent,
+                            if (villeCtrl.text.trim().isNotEmpty)
+                              'ville': villeCtrl.text.trim(),
+                            if (selectedCategory != null)
+                              'categorie': selectedCategory,
+                          };
+                          if (isOffre) {
+                            fields['type_paiement'] = selectedPricingType;
+                            if (selectedPricingType != 'quote') {
+                              fields['prix'] =
+                                  double.tryParse(prixCtrl.text);
+                            }
+                          } else {
+                            if (budgetMaxCtrl.text.trim().isNotEmpty) {
+                              fields['budget_max'] =
+                                  double.tryParse(budgetMaxCtrl.text);
+                            }
+                            if (disponibiliteCtrl.text.trim().isNotEmpty) {
+                              fields['disponibilite'] =
+                                  disponibiliteCtrl.text.trim();
+                            }
+                          }
+                          final res = await AnnonceService.updateAnnonce(
+                              annonceId, fields);
+                          setSheet(() => saving = false);
+                          if (!mounted) return;
+                          Navigator.pop(ctx);
+                          if (res.success) {
+                            _loadFeed(reset: true);
+                            if (_profileKey.currentState != null) {
+                              _profileKey.currentState!.loadMyAnnonces();
+                            }
+                            ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                              content: Text(isOffre
+                                  ? 'Offre modifiée avec succès'
+                                  : 'Demande modifiée avec succès'),
+                              backgroundColor: const Color(0xFF2D9B6F),
+                              behavior: SnackBarBehavior.floating,
+                            ));
+                          } else {
+                            ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                              content: Text(res.message ?? 'Erreur'),
+                              backgroundColor: const Color(0xFFEF4444),
+                              behavior: SnackBarBehavior.floating,
+                            ));
+                          }
+                        },
                   style: ElevatedButton.styleFrom(
                     backgroundColor: const Color(0xFF0D1F3C),
                     padding: const EdgeInsets.symmetric(vertical: 16),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(14)),
                   ),
                   child: saving
-                      ? const SizedBox(height: 18, width: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                      : const Text('Enregistrer', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                      ? const SizedBox(
+                          height: 18,
+                          width: 18,
+                          child: CircularProgressIndicator(
+                              strokeWidth: 2, color: Colors.white))
+                      : const Text('Enregistrer',
+                          style: TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.bold)),
                 ),
               ],
             ),
@@ -625,6 +794,7 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
     );
   }
+
 
   Widget _editField(String label, TextEditingController ctrl,
       {TextInputType keyboardType = TextInputType.text, int maxLines = 1}) {
@@ -655,15 +825,24 @@ class _HomeScreenState extends State<HomeScreen> {
   // ─────────────────── DETAIL OFFRE ───────────────────────────
   void _showOffreProposeeDetails(Map<String, dynamic> annonce, {required bool fromMineTab}) {
     final commentCtrl = TextEditingController();
+    final reviewCtrl = TextEditingController();
+    final replyCtrl = TextEditingController();
     final int annonceId = int.tryParse(annonce['id'].toString()) ?? 0;
     bool likedLocally = false;
     int likesLocally = annonce['nb_likes'] ?? 0;
     bool sendingComment = false;
+    bool sendingReview = false;
+    bool sendingReply = false;
     bool isOwner = fromMineTab;
     bool detailLoading = true;
     bool detailLoaded = false;
     List<Map<String, dynamic>> commentaires = [];
+    List<Map<String, dynamic>> avis = [];
+    List<Map<String, dynamic>> reponses = [];
     List<Map<String, dynamic>> likesList = [];
+    int selectedRating = 5;
+    int? activeReplyToId;
+
     List<String> photoUrls = annonce['premiere_photo'] != null
         ? [annonce['premiere_photo'].toString()]
         : <String>[];
@@ -683,6 +862,8 @@ class _HomeScreenState extends State<HomeScreen> {
             isOwner = fromMineTab || det['is_owner'] == true;
             likesLocally = det['likes_count'] ?? likesLocally;
             commentaires = List<Map<String, dynamic>>.from(det['commentaires'] ?? []);
+            avis = List<Map<String, dynamic>>.from(det['avis'] ?? []);
+            reponses = List<Map<String, dynamic>>.from(det['reponses'] ?? []);
             likesList = List<Map<String, dynamic>>.from(det['likes'] ?? []);
             final photos = List<Map<String, dynamic>>.from(det['photos'] ?? []);
             if (photos.isNotEmpty) {
@@ -719,29 +900,18 @@ class _HomeScreenState extends State<HomeScreen> {
             final bool showAsOwner = fromMineTab || isOwner;
             final bool canComment = _isLoggedIn && !showAsOwner;
             final bool isUrgent = _isUrgentActive(displayData);
+            final bool isOffre = (displayData['type_publication'] ?? 'offre').toString() == 'offre';
 
             Future<void> sendComment() async {
               final txt = commentCtrl.text.trim();
               if (txt.isEmpty || sendingComment) return;
-              if (annonceId == 0) {
-                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-                  content: Text('Erreur : offre introuvable.'),
-                  behavior: SnackBarBehavior.floating,
-                  backgroundColor: Color(0xFFEF4444),
-                ));
-                return;
-              }
+              if (annonceId == 0) return;
               setSheet(() => sendingComment = true);
               try {
                 final res = await AnnonceService.addCommentaire(annonceId, txt, 'commentaire');
                 if (!mounted) return;
                 if (res.success) {
                   commentCtrl.clear();
-                  if (res.data != null) {
-                    setSheet(() {
-                      commentaires.insert(0, Map<String, dynamic>.from(res.data as Map));
-                    });
-                  }
                   final detailRes = await AnnonceService.getDetail(annonceId);
                   if (detailRes.success && detailRes.data != null && mounted) {
                     setSheet(() {
@@ -754,16 +924,90 @@ class _HomeScreenState extends State<HomeScreen> {
                     behavior: SnackBarBehavior.floating,
                     backgroundColor: Color(0xFF2D9B6F),
                   ));
-                } else {
-                  ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-                    content: Text(res.message ?? 'Erreur lors de l\'envoi.'),
-                    behavior: SnackBarBehavior.floating,
-                    backgroundColor: const Color(0xFFEF4444),
-                  ));
                 }
               } finally {
                 if (mounted) setSheet(() => sendingComment = false);
               }
+            }
+
+            Future<void> sendReview() async {
+              final txt = reviewCtrl.text.trim();
+              if (txt.isEmpty || sendingReview) return;
+              setSheet(() => sendingReview = true);
+              try {
+                final res = await AnnonceService.addCommentaire(
+                  annonceId,
+                  txt,
+                  'avis',
+                  note: selectedRating
+                );
+                if (res.success) {
+                  reviewCtrl.clear();
+                  final detailRes = await AnnonceService.getDetail(annonceId);
+                  if (detailRes.success && detailRes.data != null && mounted) {
+                    setSheet(() {
+                      avis = List<Map<String, dynamic>>.from(
+                          (detailRes.data as Map<String, dynamic>)['avis'] ?? []);
+                    });
+                  }
+                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                    content: Text('Avis envoyé avec succès.'),
+                    behavior: SnackBarBehavior.floating,
+                    backgroundColor: Color(0xFF2D9B6F),
+                  ));
+                }
+              } finally {
+                setSheet(() => sendingReview = false);
+              }
+            }
+
+            Future<void> sendReply(int parentId) async {
+              final txt = replyCtrl.text.trim();
+              if (txt.isEmpty || sendingReply) return;
+              setSheet(() => sendingReply = true);
+              try {
+                final res = await AnnonceService.addCommentaire(
+                  annonceId,
+                  txt,
+                  'reponse',
+                  parentId: parentId
+                );
+                if (res.success) {
+                  replyCtrl.clear();
+                  activeReplyToId = null;
+                  final detailRes = await AnnonceService.getDetail(annonceId);
+                  if (detailRes.success && detailRes.data != null && mounted) {
+                    setSheet(() {
+                      reponses = List<Map<String, dynamic>>.from(
+                          (detailRes.data as Map<String, dynamic>)['reponses'] ?? []);
+                    });
+                  }
+                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                    content: Text('Réponse envoyée.'),
+                    behavior: SnackBarBehavior.floating,
+                    backgroundColor: Color(0xFF2D9B6F),
+                  ));
+                }
+              } finally {
+                setSheet(() => sendingReply = false);
+              }
+            }
+
+            Widget buildStars(int count, {double size = 16, bool clickable = false}) {
+              return Row(
+                mainAxisSize: MainAxisSize.min,
+                children: List.generate(5, (index) {
+                  final filled = index < count;
+                  return GestureDetector(
+                    onTap: clickable ? () => setSheet(() => selectedRating = index + 1) : null,
+                    child: Icon(
+                      filled ? Icons.star : Icons.star_border,
+                      color: const Color(0xFFC9A84C),
+                      size: size,
+                    ),
+                  );
+                }),
+              );
             }
 
             Widget buildCommentTile(Map<String, dynamic> c, {bool showContact = false}) {
@@ -826,6 +1070,127 @@ class _HomeScreenState extends State<HomeScreen> {
               );
             }
 
+            Widget buildAvisTile(Map<String, dynamic> a) {
+              final avatar = a['avatar_user'];
+              final int rating = a['note'] ?? 5;
+              final int reviewId = a['id'];
+              final userReponses = reponses.where((r) => r['parent_id'] == reviewId).toList();
+
+              return Container(
+                margin: const EdgeInsets.only(bottom: 12),
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: const Color(0xFFE8EDF5))),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        CircleAvatar(
+                          radius: 14,
+                          backgroundColor: const Color(0xFFE8EDF5),
+                          backgroundImage: avatar != null ? NetworkImage(avatar) : null,
+                          child: avatar == null
+                              ? const Icon(Icons.person, size: 14, color: Color(0xFF6B7A99))
+                              : null,
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(a['nom_user'] ?? 'Anonyme',
+                                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12, color: Color(0xFF0D1F3C))),
+                                         const SizedBox(height: 2),
+                                         buildStars(rating, size: 18),
+                                       ],
+                                     ),
+                                   ),
+                                 ],
+                    ),
+                    const SizedBox(height: 8),
+                    Text(a['contenu'] ?? '', style: const TextStyle(fontSize: 13, color: Color(0xFF6B7A99))),
+
+                    // Réponses existantes
+                    if (userReponses.isNotEmpty)
+                      ...userReponses.map((rep) => Container(
+                            margin: const EdgeInsets.only(top: 8, left: 16),
+                            padding: const EdgeInsets.all(8),
+                            decoration: BoxDecoration(
+                                color: const Color(0xFFF5F7FA), borderRadius: BorderRadius.circular(8)),
+                            child: Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                const Icon(Icons.subdirectory_arrow_right, size: 14, color: Color(0xFFC9A84C)),
+                                const SizedBox(width: 6),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Text('Réponse de ${nomUser}',
+                                          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 11, color: Color(0xFF0D1F3C))),
+                                      const SizedBox(height: 2),
+                                      Text(rep['contenu'] ?? '', style: const TextStyle(fontSize: 12, color: Color(0xFF6B7A99))),
+                                    ],
+                                  ),
+                                ),
+                              ],
+                            ),
+                          )),
+
+                    // Formulaire de réponse pour l'owner si pas encore de réponse
+                    if (showAsOwner && userReponses.isEmpty) ...[
+                      const SizedBox(height: 8),
+                      if (activeReplyToId == reviewId) ...[
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Container(
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFF5F7FA),
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(color: const Color(0xFF0D1F3C).withOpacity(0.08)),
+                          ),
+                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                          child: TextField(
+                            controller: replyCtrl,
+                            style: const TextStyle(fontSize: 13, color: Color(0xFF0D1F3C)),
+                            decoration: const InputDecoration(
+                              hintText: 'Écrire une réponse...',
+                              hintStyle: TextStyle(color: Color(0xFFA0ABBE)),
+                              border: InputBorder.none,
+                              isDense: true,
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      IconButton(
+                        onPressed: () => sendReply(reviewId),
+                        style: IconButton.styleFrom(
+                          backgroundColor: const Color(0xFF0D1F3C),
+                          foregroundColor: Colors.white,
+                        ),
+                        icon: const Icon(Icons.send, size: 16),
+                      ),
+                    ],
+                  ),
+                      ] else ...[
+                        TextButton.icon(
+                          onPressed: () => setSheet(() => activeReplyToId = reviewId),
+                          icon: const Icon(Icons.reply, size: 14, color: Color(0xFFC9A84C)),
+                          label: const Text('Répondre', style: TextStyle(fontSize: 12, color: Color(0xFFC9A84C))),
+                          style: TextButton.styleFrom(padding: EdgeInsets.zero, minimumSize: const Size(50, 30)),
+                        ),
+                      ],
+                    ],
+                  ],
+                ),
+              );
+            }
+
             return SizedBox(
               height: MediaQuery.of(sheetCtx).size.height * 0.85,
               child: Column(
@@ -838,6 +1203,49 @@ class _HomeScreenState extends State<HomeScreen> {
                             decoration: BoxDecoration(color: const Color(0xFFE8EDF5), borderRadius: BorderRadius.circular(2)))),
                         const SizedBox(height: 16),
 
+                        // ── HEADER UTILISATEUR (Style Réseau Social) ──
+                        Row(
+                          children: [
+                            CircleAvatar(
+                              radius: 22,
+                              backgroundColor: const Color(0xFFE8EDF5),
+                              backgroundImage: avatarUser != null ? NetworkImage(avatarUser) : null,
+                              child: avatarUser == null ? const Icon(Icons.person, size: 22, color: Color(0xFF6B7A99)) : null
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    nomUser,
+                                    style: const TextStyle(
+                                      color: Color(0xFF0D1F3C),
+                                      fontWeight: FontWeight.bold,
+                                      fontSize: 16
+                                    )
+                                  ),
+                                  const SizedBox(height: 2),
+                                  Row(
+                                    children: [
+                                      if (ville.isNotEmpty) ...[
+                                        const Icon(Icons.location_on_outlined, size: 14, color: Color(0xFFA0ABBE)),
+                                        const SizedBox(width: 2),
+                                        Text(ville, style: const TextStyle(color: Color(0xFFA0ABBE), fontSize: 13)),
+                                      ],
+                                    ],
+                                  ),
+                                ],
+                              ),
+                            ),
+                            if (isUrgent) ...[
+                              _buildUrgentBadge(),
+                            ],
+                          ],
+                        ),
+                        const SizedBox(height: 16),
+
+                        // ── CAROUSEL DE PHOTOS ──
                         _buildPhotoCarousel(
                           urls: photoUrls,
                           emoji: emoji,
@@ -846,121 +1254,196 @@ class _HomeScreenState extends State<HomeScreen> {
                         ),
                         const SizedBox(height: 16),
 
+                        // ── BARRE D'ACTIONS (Prix, Likes) ──
                         Row(
                           children: [
-                            Expanded(
-                              child: Text(titre,
-                                  style: const TextStyle(
-                                      fontSize: 20, fontWeight: FontWeight.bold, color: Color(0xFF0D1F3C))),
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFFFFFBEB),
+                                borderRadius: BorderRadius.circular(20),
+                                border: Border.all(color: const Color(0xFFC9A84C).withValues(alpha: 0.4)),
+                              ),
+                              child: Row(
+                                children: [
+                                  const Icon(Icons.monetization_on_outlined, size: 18, color: Color(0xFFC9A84C)),
+                                  const SizedBox(width: 6),
+                                  Text(
+                                    prixLabel,
+                                    style: const TextStyle(fontWeight: FontWeight.w800, color: Color(0xFFC9A84C), fontSize: 16),
+                                  ),
+                                ],
+                              ),
                             ),
-                            if (isUrgent) ...[
-                              const SizedBox(width: 8),
-                              _buildUrgentBadge(),
-                            ],
+                            const Spacer(),
+                            Row(
+                              children: [
+                                GestureDetector(
+                                  onTap: () async {
+                                    if (!_isLoggedIn) {
+                                      ScaffoldMessenger.of(sheetCtx).showSnackBar(const SnackBar(
+                                        content: Text('Connectez-vous pour liker cette offre.'),
+                                        behavior: SnackBarBehavior.floating,
+                                      ));
+                                      return;
+                                    }
+                                    final res = await AnnonceService.toggleLike(annonceId);
+                                    if (!sheetCtx.mounted) return;
+                                    if (res.success) {
+                                      final detailRes = await AnnonceService.getDetail(annonceId);
+                                      setSheet(() {
+                                        likedLocally = res.data?['liked'] == true;
+                                        if (detailRes.success && detailRes.data != null) {
+                                          final det = detailRes.data as Map<String, dynamic>;
+                                          likesLocally = det['likes_count'] ?? likesLocally;
+                                          likesList = List<Map<String, dynamic>>.from(det['likes'] ?? []);
+                                        } else {
+                                          likesLocally = likedLocally ? likesLocally + 1 : likesLocally - 1;
+                                        }
+                                      });
+                                    }
+                                  },
+                                  child: Container(
+                                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                                    decoration: BoxDecoration(
+                                      color: likedLocally ? const Color(0xFFFFEEEE) : const Color(0xFFF5F7FA),
+                                      borderRadius: BorderRadius.circular(20),
+                                    ),
+                                    child: Icon(
+                                      likedLocally ? Icons.favorite : Icons.favorite_border,
+                                      size: 20,
+                                      color: likedLocally ? const Color(0xFFEF4444) : const Color(0xFFA0ABBE)
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                GestureDetector(
+                                  onTap: likesLocally > 0 ? () => _showLikesList(likesList) : null,
+                                  child: Container(
+                                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                                    decoration: BoxDecoration(
+                                      color: const Color(0xFFF5F7FA),
+                                      borderRadius: BorderRadius.circular(20),
+                                    ),
+                                    child: Text(
+                                      '$likesLocally likes',
+                                      style: TextStyle(
+                                        color: likedLocally ? const Color(0xFFEF4444) : const Color(0xFF6B7A99),
+                                        fontWeight: FontWeight.bold,
+                                        fontSize: 14
+                                      )
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
                           ],
                         ),
-                        const SizedBox(height: 6),
-                        Row(children: [
-                          CircleAvatar(radius: 12, backgroundColor: const Color(0xFFE8EDF5),
-                              backgroundImage: avatarUser != null ? NetworkImage(avatarUser) : null,
-                              child: avatarUser == null ? const Icon(Icons.person, size: 14, color: Color(0xFF6B7A99)) : null),
-                          const SizedBox(width: 8),
-                          Text('Par $nomUser', style: const TextStyle(color: Color(0xFF6B7A99), fontSize: 13)),
-                          if (ville.isNotEmpty) ...[
-                            const SizedBox(width: 8),
-                            const Icon(Icons.location_on_outlined, size: 14, color: Color(0xFFA0ABBE)),
-                            Text(ville, style: const TextStyle(color: Color(0xFFA0ABBE), fontSize: 12)),
-                          ],
-                        ]),
-                        const SizedBox(height: 16),
-                        Container(height: 1, color: const Color(0xFFE8EDF5)),
-                        const SizedBox(height: 14),
+                        const SizedBox(height: 20),
 
-                        Row(children: [
-                          Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                            decoration: BoxDecoration(
-                              color: const Color(0xFFFFFBEB),
-                              borderRadius: BorderRadius.circular(10),
-                              border: Border.all(color: const Color(0xFFC9A84C).withOpacity(0.4)),
-                            ),
-                            child: Row(children: [
-                              const Icon(Icons.monetization_on_outlined, size: 16, color: Color(0xFFC9A84C)),
-                              const SizedBox(width: 6),
-                              Text(prixLabel,
-                                  style: const TextStyle(fontWeight: FontWeight.bold, color: Color(0xFFC9A84C), fontSize: 15)),
-                            ]),
-                          ),
-                          const Spacer(),
-                          Row(children: [
-                            GestureDetector(
-                              onTap: () async {
-                                if (!_isLoggedIn) {
-                                  ScaffoldMessenger.of(sheetCtx).showSnackBar(const SnackBar(
-                                    content: Text('Connectez-vous pour liker cette offre.'),
-                                    behavior: SnackBarBehavior.floating,
-                                  ));
-                                  return;
-                                }
-                                final res = await AnnonceService.toggleLike(annonceId);
-                                if (!sheetCtx.mounted) return;
-                                if (res.success) {
-                                  final detailRes = await AnnonceService.getDetail(annonceId);
-                                  setSheet(() {
-                                    likedLocally = res.data?['liked'] == true;
-                                    if (detailRes.success && detailRes.data != null) {
-                                      final det = detailRes.data as Map<String, dynamic>;
-                                      likesLocally = det['likes_count'] ?? likesLocally;
-                                      likesList = List<Map<String, dynamic>>.from(det['likes'] ?? []);
-                                    } else {
-                                      likesLocally = likedLocally ? likesLocally + 1 : likesLocally - 1;
-                                    }
-                                  });
-                                }
-                              },
-                              child: Container(
-                                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                                decoration: BoxDecoration(
-                                  color: likedLocally ? const Color(0xFFFFEEEE) : const Color(0xFFF5F7FA),
-                                  borderRadius: BorderRadius.circular(10),
-                                ),
-                                child: Icon(likedLocally ? Icons.favorite : Icons.favorite_border,
-                                    size: 18,
-                                    color: likedLocally ? const Color(0xFFEF4444) : const Color(0xFFA0ABBE)),
-                              ),
-                            ),
-                            const SizedBox(width: 6),
-                            GestureDetector(
-                              onTap: likesLocally > 0 ? () => _showLikesList(likesList) : null,
-                              child: Container(
-                                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                                decoration: BoxDecoration(
-                                  color: const Color(0xFFF5F7FA),
-                                  borderRadius: BorderRadius.circular(10),
-                                ),
-                                child: Text('$likesLocally',
-                                    style: TextStyle(
-                                        color: likedLocally ? const Color(0xFFEF4444) : const Color(0xFF6B7A99),
-                                        fontWeight: FontWeight.bold, fontSize: 13)),
-                              ),
-                            ),
-                          ]),
-                        ]),
-                        const SizedBox(height: 16),
+                        // ── TITRE & DESCRIPTION (Style aéré, police plus grande) ──
+                        Text(
+                          titre,
+                          style: const TextStyle(
+                            fontSize: 22,
+                            fontWeight: FontWeight.bold,
+                            color: Color(0xFF0D1F3C),
+                            height: 1.3
+                          )
+                        ),
+                        const SizedBox(height: 12),
 
                         if (description.isNotEmpty) ...[
-                          const Text('Description', style: TextStyle(fontWeight: FontWeight.bold, color: Color(0xFF0D1F3C), fontSize: 14)),
-                          const SizedBox(height: 6),
-                          Container(
-                            padding: const EdgeInsets.all(14),
-                            decoration: BoxDecoration(color: const Color(0xFFF5F7FA), borderRadius: BorderRadius.circular(12)),
-                            child: Text(description, style: const TextStyle(color: Color(0xFF6B7A99), fontSize: 13, height: 1.6)),
+                          Text(
+                            description,
+                            style: const TextStyle(
+                              color: Color(0xFF4A5568),
+                              fontSize: 15,
+                              height: 1.6,
+                              fontWeight: FontWeight.w400
+                            )
                           ),
-                          const SizedBox(height: 16),
+                          const SizedBox(height: 24),
+                        ],
+                        Container(height: 1, color: const Color(0xFFE8EDF5), margin: const EdgeInsets.only(bottom: 20)),
+
+                        // ── SECTION AVIS (Public) ──
+                      if (isOffre) ...[
+                        const Text('Avis des clients',
+                            style: TextStyle(fontWeight: FontWeight.bold, color: Color(0xFF0D1F3C), fontSize: 14)),
+                        const SizedBox(height: 10),
+                        if (avis.isEmpty)
+                          const Padding(
+                            padding: EdgeInsets.symmetric(vertical: 8),
+                            child: Text('Aucun avis pour le moment.',
+                                style: TextStyle(color: Color(0xFFA0ABBE), fontSize: 13)),
+                          )
+                        else
+                          ...avis.map((a) => buildAvisTile(a)),
+                        const SizedBox(height: 16),
+                      ],
+
+                        // Formulaire d'avis (pour non-propriétaires connectés)
+                      if (_isLoggedIn && !showAsOwner && isOffre) ...[
+                        Container(
+                            padding: const EdgeInsets.all(12),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFF5F7FA),
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                const Text('Laisser un avis',
+                                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Color(0xFF0D1F3C))),
+                                const SizedBox(height: 8),
+                                Row(
+                                  children: [
+                                    const Text('Votre note: ', style: TextStyle(fontSize: 12, color: Color(0xFF6B7A99))),
+                                    const SizedBox(width: 4),
+buildStars(selectedRating, size: 30, clickable: true),                                  ],
+                                ),
+                                const SizedBox(height: 8),
+                                const Text('Votre avis détaillé:', style: TextStyle(fontSize: 12, color: Color(0xFF6B7A99))),
+                                const SizedBox(height: 4),
+                                Container(
+                                  decoration: BoxDecoration(
+                                    color: Colors.white,
+                                    borderRadius: BorderRadius.circular(8),
+                                    border: Border.all(color: const Color(0xFFE8EDF5)),
+                                  ),
+                                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                                  child: Row(
+                                    children: [
+                                      Expanded(
+                                        child: TextField(
+                                          controller: reviewCtrl,
+                                          style: const TextStyle(fontSize: 13),
+                                          maxLines: 2,
+                                          minLines: 1,
+                                          decoration: const InputDecoration(
+                                            hintText: 'Écrivez votre commentaire ici...',
+                                            hintStyle: TextStyle(color: Color(0xFFA0ABBE)),
+                                            border: InputBorder.none,
+                                          ),
+                                        ),
+                                      ),
+                                      IconButton(
+                                        icon: const Icon(Icons.send, color: Color(0xFF0D1F3C), size: 18),
+                                        onPressed: sendReview,
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(height: 20),
                         ],
 
+                        // ── MESSAGES PRIVÉS (Commentaires) ──
                         if (!showAsOwner) ...[
-                          const Text('Commentaires',
+                          const Text('Messages privés',
                               style: TextStyle(fontWeight: FontWeight.bold, color: Color(0xFF0D1F3C), fontSize: 14)),
                           const SizedBox(height: 10),
                           if (detailLoading)
@@ -971,7 +1454,7 @@ class _HomeScreenState extends State<HomeScreen> {
                           else if (commentaires.isEmpty)
                             const Center(child: Padding(
                               padding: EdgeInsets.symmetric(vertical: 12),
-                              child: Text('Aucun commentaire pour le moment.',
+                              child: Text('Aucun message privé.',
                                   textAlign: TextAlign.center,
                                   style: TextStyle(color: Color(0xFFA0ABBE), fontSize: 13)),
                             ))
@@ -980,7 +1463,7 @@ class _HomeScreenState extends State<HomeScreen> {
                         ],
 
                         if (showAsOwner) ...[
-                          const Text('Commentaires reçus',
+                          const Text('Messages privés reçus',
                               style: TextStyle(fontWeight: FontWeight.bold, color: Color(0xFF0D1F3C), fontSize: 14)),
                           const SizedBox(height: 4),
                           const Text('Seul vous pouvez voir ces messages pour contacter les intéressés.',
@@ -994,7 +1477,7 @@ class _HomeScreenState extends State<HomeScreen> {
                           else if (commentaires.isEmpty)
                             const Center(child: Padding(
                               padding: EdgeInsets.symmetric(vertical: 12),
-                              child: Text('Aucun commentaire pour le moment.',
+                              child: Text('Aucun message privé reçu.',
                                   textAlign: TextAlign.center,
                                   style: TextStyle(color: Color(0xFFA0ABBE), fontSize: 13)),
                             ))
@@ -1019,7 +1502,7 @@ class _HomeScreenState extends State<HomeScreen> {
                               decoration: BoxDecoration(
                                 color: const Color(0xFFF5F7FA),
                                 borderRadius: BorderRadius.circular(12),
-                                border: Border.all(color: const Color(0xFF0D1F3C).withOpacity(0.08)),
+                                border: Border.all(color: const Color(0xFF0D1F3C).withValues(alpha: 0.08)),
                               ),
                               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
                               child: TextField(
@@ -1030,7 +1513,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                 onSubmitted: (_) => sendComment(),
                                 style: const TextStyle(fontSize: 13, color: Color(0xFF0D1F3C)),
                                 decoration: const InputDecoration(
-                                    hintText: 'Écrire un commentaire...',
+                                    hintText: 'Écrire un message privé...',
                                     hintStyle: TextStyle(color: Color(0xFFA0ABBE)),
                                     border: InputBorder.none),
                               ),
@@ -1345,8 +1828,9 @@ class _HomeScreenState extends State<HomeScreen> {
     final String prixLabel = _formatPrixLabel(a);
     final int nbLikes = a['nb_likes'] ?? 0;
     final int nbCommentaires = a['nb_commentaires'] ?? 0;
+    final int nbAvis = a['nb_avis'] ?? 0;
     final bool isUrgent = _isUrgentActive(a);
-    final String typePublication = (a['type_publication'] ?? 'OFFRE').toString().toUpperCase();
+final String typePublication = (a['type_publication'] ?? 'offre').toString().toLowerCase();
 
     return GestureDetector(
       onTap: () => _showOffreProposeeDetails(a, fromMineTab: true),
@@ -1404,11 +1888,11 @@ class _HomeScreenState extends State<HomeScreen> {
                     child: Container(
                       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
                       decoration: BoxDecoration(
-                        color: typePublication == 'OFFRE' ? const Color(0xFF0D1F3C) : const Color(0xFF2D9B6F),
+ color: typePublication == 'offre' ? const Color(0xFF0D1F3C) : const Color(0xFF2D9B6F),
                         borderRadius: BorderRadius.circular(20),
                       ),
                       child: Text(
-                        typePublication == 'OFFRE' ? '📢 OFFRE' : '🔍 DEMANDE',
+                        typePublication == 'offre' ? '📢 OFFRE' : '🔍 DEMANDE',
                         style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold),
                       ),
                     ),
@@ -1506,6 +1990,17 @@ class _HomeScreenState extends State<HomeScreen> {
                           const SizedBox(width: 3),
                           Text('$nbCommentaires', style: const TextStyle(color: Color(0xFF9AAAC0), fontSize: 12)),
                         ]),
+                        const SizedBox(width: 12),
+                        Row(children: [
+const Icon(Icons.star_rounded, size: 20, color: Color(0xFFC9A84C)),
+                          const SizedBox(width: 3),
+                          Text('$nbAvis',
+                            style: TextStyle(
+                              color: nbAvis > 0 ? const Color(0xFFC9A84C) : const Color(0xFF9AAAC0),
+                              fontSize: 12,
+                              fontWeight: nbAvis > 0 ? FontWeight.w600 : FontWeight.normal,
+                            )),
+                        ]),
                       ]),
                     ],
                   ),
@@ -1564,8 +2059,9 @@ class _HomeScreenState extends State<HomeScreen> {
     final String prixLabel = _formatPrixLabel(a);
     final int nbLikes = a['nb_likes'] ?? 0;
     final int nbCommentaires = a['nb_commentaires'] ?? 0;
+    final int nbAvis = a['nb_avis'] ?? 0;
     final bool isUrgent = _isUrgentActive(a);
-    final String typePublication = (a['type_publication'] ?? 'OFFRE').toString().toUpperCase();
+final String typePublication = (a['type_publication'] ?? 'offre').toString().toLowerCase();
     final String? postedAt = a['created_at']?.toString();
 
     String _shortDate(String? raw) {
@@ -1637,11 +2133,11 @@ class _HomeScreenState extends State<HomeScreen> {
                     child: Container(
                       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
                       decoration: BoxDecoration(
-                        color: typePublication == 'OFFRE' ? const Color(0xFF0D1F3C) : const Color(0xFF2D9B6F),
+                        color: typePublication == 'offre' ? const Color(0xFF0D1F3C) : const Color(0xFF2D9B6F),
                         borderRadius: BorderRadius.circular(20),
                       ),
                       child: Text(
-                        typePublication == 'OFFRE' ? '📢 OFFRE' : '🔍 DEMANDE',
+                        typePublication == 'offre' ? '📢 OFFRE' : '🔍 DEMANDE',
                         style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold),
                       ),
                     ),
@@ -1762,6 +2258,16 @@ class _HomeScreenState extends State<HomeScreen> {
                           const Text('💬', style: TextStyle(fontSize: 14)),
                           const SizedBox(width: 3),
                           Text('$nbCommentaires', style: const TextStyle(color: Color(0xFF9AAAC0), fontSize: 12)),
+                        ]),
+                        const SizedBox(width: 12),
+                        Row(children: [
+const Icon(Icons.star_rounded, size: 20, color: Color(0xFFC9A84C)),                          const SizedBox(width: 3),
+                          Text('$nbAvis',
+                            style: TextStyle(
+                              color: nbAvis > 0 ? const Color(0xFFC9A84C) : const Color(0xFF9AAAC0),
+                              fontSize: 12,
+                              fontWeight: nbAvis > 0 ? FontWeight.w600 : FontWeight.normal,
+                            )),
                         ]),
                       ]),
                     ],
