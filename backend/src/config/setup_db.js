@@ -5,9 +5,9 @@ async function run() {
   console.log('Connecting to MySQL/MariaDB...');
   // Connect without database name first to create it if it doesn't exist
   const connection = await mysql.createConnection({
-    host: 'localhost',
-    user: 'root',
-    password: ''
+    host: process.env.DB_HOST || 'localhost',
+    user: process.env.DB_USER || 'root',
+    password: process.env.DB_PASSWORD !== undefined ? process.env.DB_PASSWORD : 'root'
   });
 
   try {
@@ -126,7 +126,9 @@ async function run() {
       { name: 'badge_verifie', sql: 'ALTER TABLE prestataires ADD COLUMN badge_verifie BOOLEAN DEFAULT FALSE' },
       { name: 'raison_refus', sql: 'ALTER TABLE prestataires ADD COLUMN raison_refus TEXT NULL' },
       { name: 'documents_invalides', sql: 'ALTER TABLE prestataires ADD COLUMN documents_invalides TEXT NULL' },
-      { name: 'verifie_le', sql: 'ALTER TABLE prestataires ADD COLUMN verifie_le DATETIME NULL' }
+      { name: 'verifie_le', sql: 'ALTER TABLE prestataires ADD COLUMN verifie_le DATETIME NULL' },
+      { name: 'badge_top_prestataire', sql: 'ALTER TABLE prestataires ADD COLUMN badge_top_prestataire BOOLEAN DEFAULT FALSE' },
+      { name: 'pro_abonnement_actif', sql: 'ALTER TABLE prestataires ADD COLUMN pro_abonnement_actif BOOLEAN DEFAULT FALSE' }
     ];
 
     for (let alt of presAlterations) {

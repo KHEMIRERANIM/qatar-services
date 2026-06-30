@@ -960,38 +960,53 @@ class _HomeScreenState extends State<HomeScreen> {
                 setSheet(() => sendingReview = false);
               }
             }
-
-            Future<void> sendReply(int parentId) async {
-              final txt = replyCtrl.text.trim();
-              if (txt.isEmpty || sendingReply) return;
-              setSheet(() => sendingReply = true);
-              try {
-                final res = await AnnonceService.addCommentaire(
-                  annonceId,
-                  txt,
-                  'reponse',
-                  parentId: parentId
-                );
-                if (res.success) {
-                  replyCtrl.clear();
-                  activeReplyToId = null;
-                  final detailRes = await AnnonceService.getDetail(annonceId);
-                  if (detailRes.success && detailRes.data != null && mounted) {
-                    setSheet(() {
-                      reponses = List<Map<String, dynamic>>.from(
-                          (detailRes.data as Map<String, dynamic>)['reponses'] ?? []);
-                    });
-                  }
-                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-                    content: Text('Réponse envoyée.'),
-                    behavior: SnackBarBehavior.floating,
-                    backgroundColor: Color(0xFF2D9B6F),
-                  ));
-                }
-              } finally {
-                setSheet(() => sendingReply = false);
-              }
-            }
+Future<void> sendReply(int parentId) async {
+  final txt = replyCtrl.text.trim();
+  if (txt.isEmpty || sendingReply) return;
+  setSheet(() => sendingReply = true);
+  try {
+    final res = await AnnonceService.addCommentaire(
+      annonceId,
+      txt,
+      'reponse',
+      parentId: parentId
+    );
+    if (res.success) {
+      replyCtrl.clear();
+      setSheet(() => activeReplyToId = null);
+      final detailRes = await AnnonceService.getDetail(annonceId);
+      if (detailRes.success && detailRes.data != null && mounted) {
+        setSheet(() {
+          reponses = List<Map<String, dynamic>>.from(
+              (detailRes.data as Map<String, dynamic>)['reponses'] ?? []);
+        });
+      }
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('Réponse envoyée.'),
+        behavior: SnackBarBehavior.floating,
+        backgroundColor: Color(0xFF2D9B6F),
+      ));
+    } else {
+      print('ECHEC REPONSE: ${res.message}');
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text('ECHEC: ${res.message ?? "raison inconnue"}'),
+        behavior: SnackBarBehavior.floating,
+        backgroundColor: const Color(0xFFEF4444),
+      ));
+    }
+  } catch (e) {
+    print('EXCEPTION REPONSE: $e');
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text('EXCEPTION: $e'),
+        behavior: SnackBarBehavior.floating,
+        backgroundColor: const Color(0xFFEF4444),
+      ));
+    }
+  } finally {
+    if (mounted) setSheet(() => sendingReply = false);
+  }
+}
 
             Widget buildStars(int count, {double size = 16, bool clickable = false}) {
               return Row(
@@ -1008,6 +1023,21 @@ class _HomeScreenState extends State<HomeScreen> {
                   );
                 }),
               );
+            }
+
+            String formatCommentDate(dynamic raw) {
+              if (raw == null) return '';
+              try {
+                final dt = DateTime.parse(raw.toString()).toLocal();
+                final now = DateTime.now();
+                final diff = now.difference(dt);
+                if (diff.inMinutes < 60) return 'Il y a ${diff.inMinutes} min';
+                if (diff.inHours < 24) return 'Il y a ${diff.inHours}h';
+                if (diff.inDays < 7) return 'Il y a ${diff.inDays}j';
+                return '${dt.day}/${dt.month}/${dt.year}';
+              } catch (_) {
+                return '';
+              }
             }
 
             Widget buildCommentTile(Map<String, dynamic> c, {bool showContact = false}) {
@@ -1035,8 +1065,15 @@ class _HomeScreenState extends State<HomeScreen> {
                           mainAxisAlignment: MainAxisAlignment.spaceBetween,
                           children: [
                             Expanded(
-                              child: Text(c['nom_user'] ?? 'Utilisateur',
-                                  style: const TextStyle(fontWeight: FontWeight.bold, color: Color(0xFF0D1F3C), fontSize: 13)),
+                              child: Row(
+                                children: [
+                                  Text(c['nom_user'] ?? 'Utilisateur',
+                                      style: const TextStyle(fontWeight: FontWeight.bold, color: Color(0xFF0D1F3C), fontSize: 13)),
+                                  const SizedBox(width: 8),
+                                  Text(formatCommentDate(c['created_at']),
+                                      style: const TextStyle(fontSize: 10, color: Color(0xFF9AAAC0))),
+                                ],
+                              ),
                             ),
                             if (showContact)
                               GestureDetector(
@@ -1101,44 +1138,71 @@ class _HomeScreenState extends State<HomeScreen> {
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              Text(a['nom_user'] ?? 'Anonyme',
-                                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12, color: Color(0xFF0D1F3C))),
-                                         const SizedBox(height: 2),
-                                         buildStars(rating, size: 18),
-                                       ],
-                                     ),
-                                   ),
-                                 ],
+                              Row(
+                                children: [
+                                  Text(a['nom_user'] ?? 'Anonyme',
+                                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12, color: Color(0xFF0D1F3C))),
+                                  const SizedBox(width: 8),
+                                  Text(formatCommentDate(a['created_at']),
+                                      style: const TextStyle(fontSize: 10, color: Color(0xFF9AAAC0))),
+                                ],
+                              ),
+                              const SizedBox(height: 2),
+                              buildStars(rating, size: 18),
+                            ],
+                          ),
+                        ),
+                      ],
                     ),
                     const SizedBox(height: 8),
                     Text(a['contenu'] ?? '', style: const TextStyle(fontSize: 13, color: Color(0xFF6B7A99))),
 
                     // Réponses existantes
                     if (userReponses.isNotEmpty)
-                      ...userReponses.map((rep) => Container(
-                            margin: const EdgeInsets.only(top: 8, left: 16),
-                            padding: const EdgeInsets.all(8),
-                            decoration: BoxDecoration(
-                                color: const Color(0xFFF5F7FA), borderRadius: BorderRadius.circular(8)),
-                            child: Row(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                const Icon(Icons.subdirectory_arrow_right, size: 14, color: Color(0xFFC9A84C)),
-                                const SizedBox(width: 6),
-                                Expanded(
-                                  child: Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
-                                    children: [
-                                      Text('Réponse de ${nomUser}',
-                                          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 11, color: Color(0xFF0D1F3C))),
-                                      const SizedBox(height: 2),
-                                      Text(rep['contenu'] ?? '', style: const TextStyle(fontSize: 12, color: Color(0xFF6B7A99))),
-                                    ],
-                                  ),
+                      ...userReponses.map((rep) {
+                        final repAvatar = rep['avatar_user'];
+                        final repName = rep['nom_user'] ?? nomUser;
+                        return Container(
+                          margin: const EdgeInsets.only(top: 8, left: 16),
+                          padding: const EdgeInsets.all(8),
+                          decoration: BoxDecoration(
+                              color: const Color(0xFFF5F7FA), borderRadius: BorderRadius.circular(8)),
+                          child: Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const Icon(Icons.subdirectory_arrow_right, size: 14, color: Color(0xFFC9A84C)),
+                              const SizedBox(width: 6),
+                              CircleAvatar(
+                                radius: 11,
+                                backgroundColor: const Color(0xFFE8EDF5),
+                                backgroundImage: repAvatar != null ? NetworkImage(repAvatar) : null,
+                                child: repAvatar == null
+                                    ? const Icon(Icons.person, size: 11, color: Color(0xFF6B7A99))
+                                    : null,
+                              ),
+                              const SizedBox(width: 6),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Row(
+                                      children: [
+                                        Text(repName,
+                                            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 11, color: Color(0xFF0D1F3C))),
+                                        const SizedBox(width: 6),
+                                        Text(formatCommentDate(rep['created_at']),
+                                            style: const TextStyle(fontSize: 9, color: Color(0xFF9AAAC0))),
+                                      ],
+                                    ),
+                                    const SizedBox(height: 2),
+                                    Text(rep['contenu'] ?? '', style: const TextStyle(fontSize: 12, color: Color(0xFF6B7A99))),
+                                  ],
                                 ),
-                              ],
-                            ),
-                          )),
+                              ),
+                            ],
+                          ),
+                        );
+                      }),
 
                     // Formulaire de réponse pour l'owner si pas encore de réponse
                     if (showAsOwner && userReponses.isEmpty) ...[

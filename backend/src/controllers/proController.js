@@ -807,7 +807,7 @@ exports.getStatus = async (req, res) => {
     const userId = req.user.id;
 
     const [prestataires] = await db.query(
-      'SELECT statut_verification, badge_verifie, raison_refus, documents_invalides, verifie_le FROM prestataires WHERE user_id = ?',
+      'SELECT statut_verification, badge_verifie, raison_refus, documents_invalides, verifie_le, badge_top_prestataire, pro_abonnement_actif FROM prestataires WHERE user_id = ?',
       [userId]
     );
 
@@ -825,7 +825,15 @@ exports.getStatus = async (req, res) => {
         raison_refus: null,
         documents_invalides: [],
         documents_status: null,
-        message: null
+        message: null,
+        verifie: false,
+        top_prestataire: {
+          obtenu: false,
+          note: 0,
+          nb_avis: 0,
+          progression: 0.0
+        },
+        pro: false
       });
     }
 
@@ -833,6 +841,28 @@ exports.getStatus = async (req, res) => {
     const documentsInvalides = parseDocumentsInvalides(prestataire.documents_invalides);
     const statut = prestataire.statut_verification;
     const documentsStatus = buildDocumentsStatus(statut, doc, documentsInvalides);
+
+    const verifie = statut === 'valide';
+    const pro = prestataire.pro_abonnement_actif === 1;
+
+    // Calculate top prestataire reviews metrics in the last 3 months
+    const [stats] = await db.query(`
+      SELECT 
+        COALESCE(ROUND(AVG(c.note), 1), 0) AS note,
+        COUNT(c.id) AS nb_avis
+      FROM commentaires c
+      JOIN annonces a ON a.id = c.annonce_id
+      WHERE a.user_id = ?
+        AND c.type = 'avis'
+        AND a.type_publication = 'offre'
+        AND c.note IS NOT NULL
+        AND c.created_at >= DATE_SUB(NOW(), INTERVAL 3 MONTH)
+    `, [userId]);
+
+    const note = stats[0] ? Number(stats[0].note) : 0;
+    const nb_avis = stats[0] ? Number(stats[0].nb_avis) : 0;
+    const obtenu = prestataire.badge_top_prestataire === 1;
+    const progression = obtenu ? 1.0 : Math.max(0.0, Math.min(1.0, Math.min(note / 4.8, nb_avis / 20)));
 
     res.status(200).json({
       success: true,
@@ -845,7 +875,15 @@ exports.getStatus = async (req, res) => {
       message: buildStatusMessage(statut, documentsInvalides),
       resubmit_hint: statut === 'refuse' || documentsStatus.qid.can_replace || documentsStatus.attestation.can_replace
         ? 'Veuillez corriger uniquement les documents invalides et resoumettre.'
-        : null
+        : null,
+      verifie: verifie,
+      top_prestataire: {
+        obtenu: obtenu,
+        note: note,
+        nb_avis: nb_avis,
+        progression: progression
+      },
+      pro: pro
     });
 
   } catch (error) {
@@ -1113,3 +1151,76 @@ exports.renderMockVeriff = async (req, res) => {
     </html>
   `);
 };
+
+exports.subscribePro = async (req, res) => {
+  try {
+    const userId = req.user.id;
+
+    const [prestataires] = await db.query(
+      'SELECT statut_verification, pro_abonnement_actif FROM prestataires WHERE user_id = ?',
+      [userId]
+    );
+
+    if (prestataires.length === 0 || prestataires[0].statut_verification !== 'valide') {
+      return res.status(400).json({
+        success: false,
+        message: "Vous devez être vérifié pour souscrire à l'abonnement Pro."
+      });
+    }
+
+    if (prestataires[0].pro_abonnement_actif === 1) {
+      return res.status(400).json({
+        success: false,
+        message: "Votre abonnement Pro est déjà actif."
+      });
+    }
+
+    await db.query(
+      'UPDATE prestataires SET pro_abonnement_actif = TRUE WHERE user_id = ?',
+      [userId]
+    );
+
+    res.status(200).json({
+      success: true,
+      message: "Félicitations ! Votre abonnement Pro a été activé avec succès."
+    });
+  } catch (error) {
+    console.error('Error in subscribePro:', error);
+    res.status(500).json({ message: USER_ERROR });
+  }
+};
+
+exports.recalculateTopPrestataires = async () => {
+  try {
+    await db.query(`
+      UPDATE prestataires p
+      SET p.badge_top_prestataire = IF(
+        (
+          SELECT COALESCE(ROUND(AVG(c.note), 1), 0)
+          FROM commentaires c
+          JOIN annonces a ON a.id = c.annonce_id
+          WHERE a.user_id = p.user_id
+            AND c.type = 'avis'
+            AND a.type_publication = 'offre'
+            AND c.note IS NOT NULL
+            AND c.created_at >= DATE_SUB(NOW(), INTERVAL 3 MONTH)
+        ) >= 4.8 AND (
+          SELECT COUNT(c.id)
+          FROM commentaires c
+          JOIN annonces a ON a.id = c.annonce_id
+          WHERE a.user_id = p.user_id
+            AND c.type = 'avis'
+            AND a.type_publication = 'offre'
+            AND c.note IS NOT NULL
+            AND c.created_at >= DATE_SUB(NOW(), INTERVAL 3 MONTH)
+        ) >= 20,
+        TRUE,
+        FALSE
+      )
+    `);
+    console.log('✅ Recalculation des badges Top Prestataire terminée.');
+  } catch (err) {
+    console.error('❌ Erreur lors de la recalculation des badges Top Prestataire:', err.message);
+  }
+};
+

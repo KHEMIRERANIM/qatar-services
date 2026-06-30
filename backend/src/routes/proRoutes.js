@@ -8,6 +8,7 @@ router.post('/upload-documents', authMiddleware, proController.uploadDocuments);
 router.post('/verify', authMiddleware, proController.verify);
 router.get('/status', authMiddleware, proController.getStatus);
 router.post('/complete-native-veriff', authMiddleware, proController.completeNativeVeriff);
+router.post('/subscribe', authMiddleware, proController.subscribePro);
 
 // Admin routes (require X-Admin-Secret header)
 router.get('/admin/pending', proController.adminListPending);

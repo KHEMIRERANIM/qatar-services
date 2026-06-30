@@ -522,23 +522,39 @@ exports.addCommentaire = async (req, res) => {
     if (type === 'commentaire' && Number(annonce.user_id) === Number(userId)) {
       return res.status(403).json({ success: false, message: 'Vous ne pouvez pas commenter votre propre annonce.' });
     }
+if (type === 'avis') {
+  const [existingAvis] = await db.query(
+    "SELECT id FROM commentaires WHERE annonce_id = ? AND user_id = ? AND type = 'avis'",
+    [id, userId]
+  );
+  if (existingAvis.length > 0) {
+    return res.status(409).json({ success: false, message: 'Vous avez déjà laissé un avis sur cette offre.' });
+  }
+}
+   if (type === 'reponse') {
+     if (Number(annonce.user_id) !== Number(userId)) {
+       return res.status(403).json({ success: false, message: 'Seul le propriétaire de l\'annonce peut répondre aux avis.' });
+     }
+     if (!parent_id) {
+       return res.status(400).json({ success: false, message: 'ID de l\'avis parent requis pour répondre.' });
+     }
 
-    if (type === 'avis' && Number(annonce.user_id) === Number(userId)) {
-      return res.status(403).json({ success: false, message: 'Vous ne pouvez pas laisser un avis sur votre propre annonce.' });
-    }
+     const [parentComment] = await db.query(
+       "SELECT id, type FROM commentaires WHERE id = ? AND annonce_id = ?",
+       [parent_id, id]
+     );
+     if (parentComment.length === 0 || parentComment[0].type !== 'avis') {
+       return res.status(404).json({ success: false, message: 'Avis introuvable ou invalide.' });
+     }
 
-    if (type === 'avis' && annonce.type_publication === 'demande') {
-      return res.status(403).json({ success: false, message: 'Les demandes ne reçoivent pas d\'avis.' });
-    }
-    if (type === 'reponse') {
-      if (Number(annonce.user_id) !== Number(userId)) {
-        return res.status(403).json({ success: false, message: 'Seul le propriétaire de l\'annonce peut répondre aux avis.' });
-      }
-      if (!parent_id) {
-        return res.status(400).json({ success: false, message: 'ID de l\'avis parent requis pour répondre.' });
-      }
-    }
-
+     const [existingReponse] = await db.query(
+       "SELECT id FROM commentaires WHERE parent_id = ? AND type = 'reponse'",
+       [parent_id]
+     );
+     if (existingReponse.length > 0) {
+       return res.status(409).json({ success: false, message: 'Vous avez déjà répondu à cet avis.' });
+     }
+   }
     // 2. Insérer le commentaire
     const [result] = await db.query(
       "INSERT INTO commentaires (annonce_id, user_id, contenu, type, note, parent_id) VALUES (?, ?, ?, ?, ?, ?)",
@@ -622,11 +638,20 @@ exports.deleteCommentaire = async (req, res) => {
 
     const commentaire = commentaires[0];
 
-    // 3. Vérifier l'autorisation : seul le propriétaire de l'annonce, ou l'auteur du commentaire, peut supprimer
+// 3. Vérifier l'autorisation
+  if (commentaire.type === 'avis') {
+    // Seul l'auteur de l'avis peut le supprimer (pas le propriétaire de l'annonce)
+    if (commentaire.user_id !== req.user.id) {
+      return res.status(403).json({ success: false, message: 'Seul l\'auteur de l\'avis peut le supprimer.' });
+    }
+  } else if (commentaire.type === 'reponse') {
+    return res.status(403).json({ success: false, message: 'Les réponses ne peuvent pas être supprimées, seulement modifiées.' });
+  } else {
+    // Pour les commentaires classiques : propriétaire de l'annonce OU auteur
     if (annonce.user_id !== req.user.id && commentaire.user_id !== req.user.id) {
       return res.status(403).json({ success: false, message: 'Action non autorisée.' });
     }
-
+  }
     // 4. Supprimer le commentaire et les réponses enfants si c'est un avis
     if (commentaire.type === 'avis') {
       await db.query("DELETE FROM commentaires WHERE parent_id = ?", [cid]);
@@ -677,6 +702,47 @@ exports.contacterCommentateur = async (req, res) => {
       }
     });
 
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// PUT /api/annonces/:id/commentaires/:cid - Modifier une réponse (propriétaire de l'annonce uniquement)
+exports.updateCommentaire = async (req, res) => {
+  try {
+    const { id, cid } = req.params;
+    const { contenu } = req.body;
+
+    if (!contenu || contenu.trim() === '') {
+      return res.status(400).json({ success: false, message: 'Le contenu est requis.' });
+    }
+
+    const [annonces] = await db.query("SELECT user_id FROM annonces WHERE id = ?", [id]);
+    if (annonces.length === 0) {
+      return res.status(404).json({ success: false, message: 'Annonce introuvable.' });
+    }
+    const annonce = annonces[0];
+
+    const [commentaires] = await db.query(
+      "SELECT id, user_id, type FROM commentaires WHERE id = ? AND annonce_id = ?",
+      [cid, id]
+    );
+    if (commentaires.length === 0) {
+      return res.status(404).json({ success: false, message: 'Commentaire introuvable.' });
+    }
+    const commentaire = commentaires[0];
+
+    if (commentaire.type !== 'reponse') {
+      return res.status(403).json({ success: false, message: 'Seules les réponses peuvent être modifiées.' });
+    }
+
+    if (Number(annonce.user_id) !== Number(req.user.id) || Number(commentaire.user_id) !== Number(req.user.id)) {
+      return res.status(403).json({ success: false, message: 'Action non autorisée.' });
+    }
+
+    await db.query("UPDATE commentaires SET contenu = ? WHERE id = ?", [contenu, cid]);
+
+    res.json({ success: true, message: 'Réponse modifiée avec succès.' });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }

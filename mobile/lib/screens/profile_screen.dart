@@ -32,8 +32,15 @@ class ProfileScreen extends StatefulWidget {
 }
 
 class ProfileScreenState extends State<ProfileScreen> {
-  bool _isPro = false;
+  bool _isVerifie = false;
   bool _isLoadingProfile = true;
+
+  bool _badgeVerifie = false;
+  bool _badgeTopPrestataire = false;
+  double _topPrestataireProgression = 0.0;
+  double _topPrestataireNote = 0.0;
+  int _topPrestataireNbAvis = 0;
+  bool _badgePro = false;
 
   // Profile data (populated from API)
   String _name = "";
@@ -66,6 +73,7 @@ class ProfileScreenState extends State<ProfileScreen> {
     _loadProfile();
     loadMyAnnonces();
     _loadAvisStats();
+    _loadProStatus();
   }
 
   Future<void> _loadAvisStats() async {
@@ -86,6 +94,24 @@ class ProfileScreenState extends State<ProfileScreen> {
         _avisRecents = List<Map<String, dynamic>>.from(data['avis_recents'] ?? []);
       }
     });
+  }
+
+  Future<void> _loadProStatus() async {
+    final res = await ProService.getStatus();
+    if (!mounted) return;
+    if (res['success'] == true) {
+      setState(() {
+        _badgeVerifie = res['verifie'] == true;
+        _badgePro = res['pro'] == true;
+        final top = res['top_prestataire'];
+        if (top != null) {
+          _badgeTopPrestataire = top['obtenu'] == true;
+          _topPrestataireProgression = double.tryParse(top['progression']?.toString() ?? '0.0') ?? 0.0;
+          _topPrestataireNote = double.tryParse(top['note']?.toString() ?? '0.0') ?? 0.0;
+          _topPrestataireNbAvis = int.tryParse(top['nb_avis']?.toString() ?? '0') ?? 0;
+        }
+      });
+    }
   }
 
   String get _ratingHeaderText {
@@ -154,7 +180,7 @@ class ProfileScreenState extends State<ProfileScreen> {
         if (ratingRaw != null) _rating = ratingRaw.toString();
         final avisRaw = userData['nb_avis'] ?? userData['reviewCount'];
         if (avisRaw != null) _reviewCount = int.tryParse(avisRaw.toString()) ?? 0;
-        _isPro = userData['role'] == 'pro' || userData['isPro'] == true;
+        _isVerifie = userData['role'] == 'pro' || userData['isPro'] == true;
         if (userData['photo'] != null && userData['photo'].toString().isNotEmpty) {
           _imageUrl = userData['photo'];
         }
@@ -187,10 +213,10 @@ class ProfileScreenState extends State<ProfileScreen> {
   }
 
   void _editProfileInfo() {
-    final nameController = TextEditingController(text: _isPro ? _proName : _name);
-    final emailController = TextEditingController(text: _isPro ? _proEmail : _email);
-    final phoneController = TextEditingController(text: _isPro ? _proPhone : _phone);
-    final bioController = TextEditingController(text: _isPro ? _proBio : _bio);
+    final nameController = TextEditingController(text: _isVerifie ? _proName : _name);
+    final emailController = TextEditingController(text: _isVerifie ? _proEmail : _email);
+    final phoneController = TextEditingController(text: _isVerifie ? _proPhone : _phone);
+    final bioController = TextEditingController(text: _isVerifie ? _proBio : _bio);
 String? selectedVille = _city.isNotEmpty ? _city : null;
 final villes = ['Doha', 'Al Rayyan', 'Al Wakrah', 'Umm Salal', 'Al Khor', 'Al Daayen', 'Al Shahaniya', 'Al Shamal'];
     // Parse existing date_naissance
@@ -528,7 +554,7 @@ final villes = ['Doha', 'Al Rayyan', 'Al Wakrah', 'Umm Salal', 'Al Khor', 'Al Da
       MaterialPageRoute(
         builder: (context) => UpgradeProScreen(
           onComplete: () {
-            setState(() { _isPro = true; });
+            setState(() { _isVerifie = true; });
             ScaffoldMessenger.of(context).showSnackBar(
               const SnackBar(
                 content: Text("Félicitations ! Vous êtes maintenant un Professionnel vérifié."),
@@ -536,6 +562,7 @@ final villes = ['Doha', 'Al Rayyan', 'Al Wakrah', 'Umm Salal', 'Al Khor', 'Al Da
                 behavior: SnackBarBehavior.floating,
               ),
             );
+            _loadProStatus();
           },
         ),
       ),
@@ -552,7 +579,7 @@ final villes = ['Doha', 'Al Rayyan', 'Al Wakrah', 'Umm Salal', 'Al Khor', 'Al Da
         ),
       );
     }
-    return _isPro ? _buildProProfile() : _buildClientProfile();
+    return _isVerifie ? _buildProProfile() : _buildClientProfile();
   }
 
   // ── Shared profile header ────────────────────────────────
@@ -808,39 +835,187 @@ final villes = ['Doha', 'Al Rayyan', 'Al Wakrah', 'Umm Salal', 'Al Khor', 'Al Da
   }
 
   Widget _buildBadgesSection() {
-    final badges = [
-      {'icon': Icons.verified_user, 'label': 'Vérifié', 'color': const Color(0xFF2D9B6F)},
-      {'icon': Icons.star, 'label': 'Top Pro', 'color': const Color(0xFFC9A84C)},
-      {'icon': Icons.bolt, 'label': 'Réactif', 'color': const Color(0xFF1565C0)},
-    ];
     return _sectionCard(
       title: "Badges",
-      child: Row(
-        children: badges
-            .map((b) => Expanded(
-                  child: Column(
+      child: Column(
+        children: [
+          // ── Badge Vérifié ──
+          _buildBadgeRow(
+            icon: Icons.verified,
+            label: 'Vérifié',
+            description: 'Identité confirmée',
+            activeColor: const Color(0xFF2D9B6F),
+            obtained: _badgeVerifie,
+            trailing: _badgeVerifie
+                ? _buildObtenuPill()
+                : _buildActionLink('Vérifier ›', _upgradeToProFlow),
+          ),
+          const Divider(height: 1, color: Color(0xFFF0F2F5)),
+          // ── Badge Top prestataire ──
+          _buildBadgeRow(
+            icon: Icons.workspace_premium,
+            label: 'Top prestataire',
+            description: 'Note ≥ 4.8 et 20 avis sur 3 mois requis',
+            activeColor: const Color(0xFFC9A84C),
+            obtained: _badgeTopPrestataire,
+            trailing: _badgeTopPrestataire
+                ? _buildObtenuPill()
+                : Row(
+                    mainAxisSize: MainAxisSize.min,
                     children: [
-                      Container(
-                        width: 52,
-                        height: 52,
-                        decoration: BoxDecoration(
-                          color: (b['color'] as Color).withOpacity(0.1),
-                          borderRadius: BorderRadius.circular(16),
-                        ),
-                        alignment: Alignment.center,
-                        child: Icon(b['icon'] as IconData, color: b['color'] as Color, size: 22),
-                      ),
-                      const SizedBox(height: 6),
                       Text(
-                        b['label'] as String,
-                        style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w500, color: Color(0xFF6B7A99)),
+                        '${_topPrestataireNote.toStringAsFixed(1)}★ · ${_topPrestataireNbAvis} avis',
+                        style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: Color(0xFF6B7A99)),
                       ),
                     ],
                   ),
-                ))
-            .toList(),
+            progressValue: _badgeTopPrestataire ? null : _topPrestataireProgression,
+          ),
+          const Divider(height: 1, color: Color(0xFFF0F2F5)),
+          // ── Badge Pro ──
+          _buildBadgeRow(
+            icon: Icons.diamond_outlined,
+            label: 'Pro',
+            description: 'Abonnement mensuel',
+            activeColor: const Color(0xFF6366F1),
+            obtained: _badgePro,
+            trailing: _badgePro
+                ? _buildObtenuPill()
+                : _buildActionLink('Débloquer ›', _subscribePro),
+          ),
+        ],
       ),
     );
+  }
+
+  Widget _buildBadgeRow({
+    required IconData icon,
+    required String label,
+    required String description,
+    required Color activeColor,
+    required bool obtained,
+    required Widget trailing,
+    double? progressValue,
+  }) {
+    final color = obtained ? activeColor : const Color(0xFFBCC5D3);
+    final bgColor = obtained ? activeColor.withOpacity(0.1) : const Color(0xFFF0F2F5);
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 12),
+      child: Column(
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 40,
+                height: 40,
+                decoration: BoxDecoration(
+                  color: bgColor,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                alignment: Alignment.center,
+                child: Icon(icon, color: color, size: 20),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(label, style: TextStyle(
+                      fontWeight: FontWeight.w700,
+                      fontSize: 15,
+                      color: obtained ? const Color(0xFF0D1F3C) : const Color(0xFF6B7A99),
+                    )),
+                    const SizedBox(height: 2),
+                    Text(description, style: const TextStyle(
+                      fontSize: 12.5,
+                      color: Color(0xFF9AAAC0),
+                    )),
+                  ],
+                ),
+              ),
+              trailing,
+            ],
+          ),
+          if (progressValue != null) ...[
+            const SizedBox(height: 8),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(4),
+              child: LinearProgressIndicator(
+                value: progressValue,
+                backgroundColor: const Color(0xFFE8ECF1),
+                valueColor: AlwaysStoppedAnimation<Color>(activeColor),
+                minHeight: 5,
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildObtenuPill() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
+      decoration: BoxDecoration(
+        color: const Color(0xFF2D9B6F).withOpacity(0.1),
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: const Text(
+        'Obtenu',
+        style: TextStyle(
+          fontSize: 12,
+          fontWeight: FontWeight.w700,
+          color: Color(0xFF2D9B6F),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildActionLink(String text, VoidCallback onTap) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Text(
+        text,
+        style: const TextStyle(
+          fontSize: 13,
+          fontWeight: FontWeight.w700,
+          color: Color(0xFF3B82F6),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _subscribePro() async {
+    if (!_badgeVerifie) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Vous devez être vérifié pour souscrire à l\'abonnement Pro.'),
+          backgroundColor: Color(0xFFEF4444),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+      return;
+    }
+    final res = await ProService.subscribe();
+    if (!mounted) return;
+    if (res['success'] == true) {
+      setState(() { _badgePro = true; });
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Félicitations ! Abonnement Pro activé 🎉'),
+          backgroundColor: Color(0xFF2D9B6F),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(res['message'] ?? 'Erreur lors de la souscription.'),
+          backgroundColor: const Color(0xFFEF4444),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    }
   }
 
   Widget _buildAboutSection(String bio) {
@@ -1001,7 +1176,7 @@ final villes = ['Doha', 'Al Rayyan', 'Al Wakrah', 'Umm Salal', 'Al Khor', 'Al Da
 
   /* ─── Client Profile View ────────────────────────────────── */
   Widget _buildClientProfile() {
-    final displayCity = _city.isNotEmpty ? _city : 'Al Waab, Doha';
+    final displayCity = _city;
 
     return Scaffold(
       backgroundColor: const Color(0xFFF5F7FA),
@@ -1040,7 +1215,7 @@ final villes = ['Doha', 'Al Rayyan', 'Al Wakrah', 'Umm Salal', 'Al Khor', 'Al Da
               padding: const EdgeInsets.symmetric(horizontal: 20),
               child: Column(
                 children: [
-                  // Devenir Pro — carte dorée
+                  // Devenir Vérifié — carte dorée
                   InkWell(
                     onTap: _upgradeToProFlow,
                     borderRadius: BorderRadius.circular(20),
@@ -1079,7 +1254,7 @@ final villes = ['Doha', 'Al Rayyan', 'Al Wakrah', 'Umm Salal', 'Al Khor', 'Al Da
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                Text("⭐ Devenir Pro",
+                                Text("✅ Devenir Vérifié",
                                     style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14)),
                                 SizedBox(height: 2),
                                 Text("Uploadez vos documents et obtenez le badge vérifié",
@@ -1160,7 +1335,7 @@ final villes = ['Doha', 'Al Rayyan', 'Al Wakrah', 'Umm Salal', 'Al Khor', 'Al Da
 
   /* ─── Pro Profile View ───────────────────────────────────── */
   Widget _buildProProfile() {
-    final displayCity = _city.isNotEmpty ? _city : 'Al Waab, Doha';
+    final displayCity = _city;
     final displayName = _name.isNotEmpty ? _name : _proName;
     final displayBio = _bio.isNotEmpty ? _bio : _proBio;
     final displayImage = _imageUrl.isNotEmpty ? _imageUrl : _proImageUrl;
@@ -1316,7 +1491,7 @@ final villes = ['Doha', 'Al Rayyan', 'Al Wakrah', 'Umm Salal', 'Al Khor', 'Al Da
 
                   Center(
                     child: TextButton(
-                      onPressed: () { setState(() { _isPro = false; }); },
+                      onPressed: () { setState(() { _isVerifie = false; }); },
                       child: const Text("← Voir profil client",
                           style: TextStyle(color: Color(0xFFA0ABBE), fontSize: 12)),
                     ),
@@ -1557,7 +1732,7 @@ final villes = ['Doha', 'Al Rayyan', 'Al Wakrah', 'Umm Salal', 'Al Khor', 'Al Da
                               border: Border.all(color: const Color(0xFFC9A84C), width: 2),
                             ),
                             child: ClipOval(
-                              child: _isPro
+                              child: _isVerifie
                                   ? Image.network(_proImageUrl, fit: BoxFit.cover,
                                       errorBuilder: (_, __, ___) =>
                                           const Icon(Icons.person, size: 16, color: Color(0xFF6B7A99)))
@@ -1571,7 +1746,7 @@ final villes = ['Doha', 'Al Rayyan', 'Al Wakrah', 'Umm Salal', 'Al Khor', 'Al Da
                             ),
                           ),
                           const SizedBox(width: 8),
-                          Text(_isPro ? _proName : _name,
+                          Text(_isVerifie ? _proName : _name,
                               style: const TextStyle(
                                   color: Colors.white,
                                   fontSize: 12,
@@ -2450,7 +2625,7 @@ class _UpgradeProScreenState extends State<UpgradeProScreen> {
                   Text(
                     _isPartialResubmit || _correctionMode
                         ? "Corriger mes documents"
-                        : "Devenir Professionnel",
+                        : "Devenir Vérifié",
                     style: const TextStyle(
                         color: Colors.white,
                         fontFamily: 'Playfair Display',

@@ -44,3 +44,5 @@ services:
       - PMA_PASSWORD=root
 volumes:
   mysql_data:
+    external: true
+    name: qatar-services_mysql_data

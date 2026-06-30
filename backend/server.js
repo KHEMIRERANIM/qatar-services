@@ -4,6 +4,7 @@ const dotenv = require('dotenv');
 const fileUpload = require('express-fileupload');
 const db = require('./src/config/database');
 //const { runMigrations } = require('./src/config/migrate');
+const cron = require('node-cron');
 
 dotenv.config();
 
@@ -102,6 +103,15 @@ async function initDatabase() {
       checkExpiredAnnonces(db);
     }, 60 * 60 * 1000);
 
+    // 5. Lancement du job mensuel de recalculation des Top Prestataires (chaque 30 jours)
+  cron.schedule('0 0 1 * *', async () => {
+    try {
+      await proController.recalculateTopPrestataires();
+    } catch (err) {
+      console.error('❌ Erreur lors de la recalculation mensuelle des Top Prestataires:', err.message);
+    }
+  });
+
     // Exécuter un nettoyage initial au démarrage
     const [result] = await db.query('DELETE FROM tokens WHERE expire_le < NOW()');
     if (result.affectedRows > 0) {
@@ -110,6 +120,9 @@ async function initDatabase() {
 
     // Exécuter la vérification initiale des annonces expirées au démarrage
     await checkExpiredAnnonces(db);
+
+    // Exécuter le calcul initial des Top Prestataires au démarrage
+    await proController.recalculateTopPrestataires();
 
   } catch (error) {
     console.error('❌ Erreur initialisation database:', error.message);

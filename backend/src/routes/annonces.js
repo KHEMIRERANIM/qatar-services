@@ -53,6 +53,7 @@ router.delete('/:id/photos/:pid', authMiddleware, annoncesController.deletePhoto
 router.post('/:id/like', authMiddleware, annoncesController.toggleLike);
 router.post('/:id/commentaires', authMiddleware, annoncesController.addCommentaire);
 router.delete('/:id/commentaires/:cid', authMiddleware, annoncesController.deleteCommentaire);
+router.put('/:id/commentaires/:cid', authMiddleware, annoncesController.updateCommentaire);
 
 // Ouvrir chat privé (Stub pour plus tard)
 router.post('/:id/commentaires/:cid/contacter', authMiddleware, annoncesController.contacterCommentateur);

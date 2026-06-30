@@ -205,4 +205,34 @@ class ProService {
       return _friendlyError();
     }
   }
+
+  // POST /pro/subscribe
+  static Future<Map<String, dynamic>> subscribe() async {
+    final token = await TokenService.getToken();
+    if (token == null) {
+      return _friendlyError('Veuillez vous reconnecter.');
+    }
+
+    try {
+      final response = await http.post(
+        Uri.parse('$baseUrl/pro/subscribe'),
+        headers: {
+          'Authorization': 'Bearer $token',
+          'Content-Type': 'application/json',
+        },
+      ).timeout(const Duration(seconds: 15));
+
+      final data = jsonDecode(response.body) as Map<String, dynamic>;
+
+      if (response.statusCode == 200) {
+        return {'success': true, ...data};
+      }
+
+      debugPrint('ProService.subscribe error: ${response.statusCode} ${response.body}');
+      return _friendlyError(data['message'] as String?);
+    } catch (e) {
+      debugPrint('ProService.subscribe exception: $e');
+      return _friendlyError();
+    }
+  }
 }
