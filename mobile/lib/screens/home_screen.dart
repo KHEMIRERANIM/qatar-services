@@ -1042,65 +1042,157 @@ Future<void> sendReply(int parentId) async {
 
             Widget buildCommentTile(Map<String, dynamic> c, {bool showContact = false}) {
               final avatar = c['avatar_user'];
+              final commentId = int.tryParse(c['id'].toString()) ?? 0;
+              final bool isMsgAuthor = _isLoggedIn && c['is_author'] == true;
+              final bool canDeleteMsg = _isLoggedIn && (c['is_author'] == true || showAsOwner);
+              final editCtrl = TextEditingController(text: c['contenu'] ?? '');
               return Container(
                 margin: const EdgeInsets.only(bottom: 10),
                 padding: const EdgeInsets.all(12),
                 decoration: BoxDecoration(
                     color: const Color(0xFFF5F7FA), borderRadius: BorderRadius.circular(12)),
-                child: Row(
+                child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    CircleAvatar(
-                      radius: 16,
-                      backgroundColor: const Color(0xFFE8EDF5),
-                      backgroundImage: avatar != null ? NetworkImage(avatar) : null,
-                      child: avatar == null
-                          ? const Icon(Icons.person, size: 16, color: Color(0xFF6B7A99))
-                          : null,
-                    ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            Expanded(
-                              child: Row(
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.center,
+                      children: [
+                        CircleAvatar(
+                          radius: 16,
+                          backgroundColor: const Color(0xFFE8EDF5),
+                          backgroundImage: avatar != null ? NetworkImage(avatar) : null,
+                          child: avatar == null
+                              ? const Icon(Icons.person, size: 16, color: Color(0xFF6B7A99))
+                              : null,
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                crossAxisAlignment: CrossAxisAlignment.center,
                                 children: [
-                                  Text(c['nom_user'] ?? 'Utilisateur',
-                                      style: const TextStyle(fontWeight: FontWeight.bold, color: Color(0xFF0D1F3C), fontSize: 13)),
-                                  const SizedBox(width: 8),
+                                  Flexible(
+                                    child: Text(c['nom_user'] ?? 'Utilisateur',
+                                        overflow: TextOverflow.ellipsis,
+                                        style: const TextStyle(fontWeight: FontWeight.bold, color: Color(0xFF0D1F3C), fontSize: 13)),
+                                  ),
+                                  const SizedBox(width: 6),
+                                  const Text('·', style: TextStyle(color: Color(0xFF9AAAC0), fontSize: 13, fontWeight: FontWeight.bold)),
+                                  const SizedBox(width: 6),
                                   Text(formatCommentDate(c['created_at']),
                                       style: const TextStyle(fontSize: 10, color: Color(0xFF9AAAC0))),
                                 ],
                               ),
-                            ),
-                            if (showContact)
-                              GestureDetector(
-                                onTap: () {
-                                  Navigator.pop(sheetCtx);
-                                  _showContactOptions(c['nom_user'] ?? 'Utilisateur', c['tel_user']);
+                              const SizedBox(height: 2),
+                              activeReplyToId == -commentId
+                                  ? Container(
+                                      decoration: BoxDecoration(
+                                        color: Colors.white,
+                                        borderRadius: BorderRadius.circular(10),
+                                        border: Border.all(color: const Color(0xFF0D1F3C).withOpacity(0.15)),
+                                      ),
+                                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                                      child: Row(
+                                        children: [
+                                          Expanded(
+                                            child: TextField(
+                                              controller: editCtrl,
+                                              style: const TextStyle(fontSize: 13, color: Color(0xFF0D1F3C)),
+                                              maxLines: 3,
+                                              minLines: 1,
+                                              decoration: const InputDecoration(border: InputBorder.none, isDense: true, hintText: 'Modifier votre message...', hintStyle: TextStyle(color: Color(0xFFA0ABBE))),
+                                            ),
+                                          ),
+                                          const SizedBox(width: 8),
+                                          GestureDetector(
+                                            onTap: () => setSheet(() => activeReplyToId = null),
+                                            child: const Icon(Icons.close, color: Color(0xFF9AAAC0), size: 18),
+                                          ),
+                                          const SizedBox(width: 8),
+                                          GestureDetector(
+                                            onTap: () async {
+                                              final txt = editCtrl.text.trim();
+                                              if (txt.isEmpty) return;
+                                              final res = await AnnonceService.updateCommentaire(annonceId, commentId, txt);
+                                              if (!mounted) return;
+                                              if (res.success) {
+                                                final det = await AnnonceService.getDetail(annonceId);
+                                                if (det.success && det.data != null && mounted) {
+                                                  setSheet(() {
+                                                    commentaires = List<Map<String, dynamic>>.from((det.data as Map<String, dynamic>)['commentaires'] ?? []);
+                                                    activeReplyToId = null;
+                                                  });
+                                                }
+                                              }
+                                            },
+                                            child: Container(
+                                              padding: const EdgeInsets.all(6),
+                                              decoration: BoxDecoration(color: const Color(0xFF0D1F3C), borderRadius: BorderRadius.circular(8)),
+                                              child: const Icon(Icons.send_rounded, color: Colors.white, size: 15),
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    )
+                                  : Text(c['contenu'] ?? '', style: const TextStyle(color: Color(0xFF6B7A99), fontSize: 13, height: 1.5)),
+                            ],
+                          ),
+                        ),
+                        Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            if (showContact || isMsgAuthor || canDeleteMsg)
+                              PopupMenuButton<String>(
+                                icon: const Icon(Icons.more_vert, size: 18, color: Color(0xFF9AAAC0)),
+                                padding: EdgeInsets.zero,
+                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                                onSelected: (value) async {
+                                  if (value == 'contact') {
+                                    Navigator.pop(sheetCtx);
+                                    _showContactOptions(c['nom_user'] ?? 'Utilisateur', c['tel_user']);
+                                  } else if (value == 'edit') {
+                                    setSheet(() => activeReplyToId = -commentId);
+                                  } else if (value == 'delete') {
+                                    final ok = await showDialog<bool>(
+                                      context: context,
+                                      builder: (d) => AlertDialog(
+                                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                                        title: const Text('Supprimer le message ?'),
+                                        content: const Text('Cette action est irréversible.'),
+                                        actions: [
+                                          TextButton(onPressed: () => Navigator.pop(d, false), child: const Text('Annuler')),
+                                          TextButton(onPressed: () => Navigator.pop(d, true), child: const Text('Supprimer', style: TextStyle(color: Color(0xFFEF4444)))),
+                                        ],
+                                      ),
+                                    );
+                                    if (ok != true || !mounted) return;
+                                    final res = await AnnonceService.deleteCommentaire(annonceId, commentId);
+                                    if (!mounted) return;
+                                    if (res.success) {
+                                      final det = await AnnonceService.getDetail(annonceId);
+                                      if (det.success && det.data != null && mounted) {
+                                        setSheet(() {
+                                          commentaires = List<Map<String, dynamic>>.from(
+                                              (det.data as Map<String, dynamic>)['commentaires'] ?? []);
+                                        });
+                                      }
+                                    }
+                                  }
                                 },
-                                child: Container(
-                                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                                  decoration: BoxDecoration(
-                                    color: const Color(0xFFE8EDF5),
-                                    borderRadius: BorderRadius.circular(8),
-                                  ),
-                                  child: const Row(
-                                    children: [
-                                      Icon(Icons.chat_bubble_outline, size: 12, color: Color(0xFF0D1F3C)),
-                                      SizedBox(width: 4),
-                                      Text('Contacter', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Color(0xFF0D1F3C))),
-                                    ],
-                                  ),
-                                ),
+                                itemBuilder: (_) => [
+                                  if (showContact)
+                                    const PopupMenuItem(value: 'contact', child: Row(children: [Icon(Icons.chat_bubble_outline, size: 16, color: Color(0xFF0D1F3C)), SizedBox(width: 8), Text('Contacter', style: TextStyle(fontSize: 13))])),
+                                  if (isMsgAuthor)
+                                    const PopupMenuItem(value: 'edit', child: Row(children: [Icon(Icons.edit_outlined, size: 16, color: Color(0xFF6B7A99)), SizedBox(width: 8), Text('Modifier', style: TextStyle(fontSize: 13))])),
+                                  if (canDeleteMsg)
+                                    const PopupMenuItem(value: 'delete', child: Row(children: [Icon(Icons.delete_outline, size: 16, color: Color(0xFFEF4444)), SizedBox(width: 8), Text('Supprimer', style: TextStyle(color: Color(0xFFEF4444), fontSize: 13))])),
+                                ],
                               ),
                           ],
                         ),
-                        const SizedBox(height: 4),
-                        Text(c['contenu'] ?? '', style: const TextStyle(color: Color(0xFF6B7A99), fontSize: 13, height: 1.5)),
-                      ]),
+                      ],
                     ),
                   ],
                 ),
@@ -1124,6 +1216,7 @@ Future<void> sendReply(int parentId) async {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Row(
+                      crossAxisAlignment: CrossAxisAlignment.center,
                       children: [
                         CircleAvatar(
                           radius: 14,
@@ -1135,118 +1228,376 @@ Future<void> sendReply(int parentId) async {
                         ),
                         const SizedBox(width: 8),
                         Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
+                          child: Row(
+                            crossAxisAlignment: CrossAxisAlignment.center,
                             children: [
-                              Row(
-                                children: [
-                                  Text(a['nom_user'] ?? 'Anonyme',
-                                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12, color: Color(0xFF0D1F3C))),
-                                  const SizedBox(width: 8),
-                                  Text(formatCommentDate(a['created_at']),
-                                      style: const TextStyle(fontSize: 10, color: Color(0xFF9AAAC0))),
-                                ],
+                              Flexible(
+                                child: Text(a['nom_user'] ?? 'Anonyme',
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12, color: Color(0xFF0D1F3C))),
                               ),
-                              const SizedBox(height: 2),
-                              buildStars(rating, size: 18),
+                              const SizedBox(width: 6),
+                              const Text('·', style: TextStyle(color: Color(0xFF9AAAC0), fontSize: 12, fontWeight: FontWeight.bold)),
+                              const SizedBox(width: 6),
+                              Text(formatCommentDate(a['created_at']),
+                                  style: const TextStyle(fontSize: 10, color: Color(0xFF9AAAC0))),
                             ],
                           ),
                         ),
                       ],
                     ),
-                    const SizedBox(height: 8),
-                    Text(a['contenu'] ?? '', style: const TextStyle(fontSize: 13, color: Color(0xFF6B7A99))),
+                    const SizedBox(height: 2),
+                    Padding(
+                      padding: const EdgeInsets.only(left: 36),
+                      child: buildStars(rating, size: 16),
+                    ),
+                    const SizedBox(height: 2),
+                    StatefulBuilder(
+                      builder: (ctxAvis, setAvisEdit) {
+                        final eCtrl = TextEditingController(text: a['contenu'] ?? '');
+                        return Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Expanded(
+                                  child: activeReplyToId == -a['id']
+                                      ? Container(
+                                          margin: const EdgeInsets.only(top: 4, left: 36),
+                                          decoration: BoxDecoration(
+                                            color: Colors.white,
+                                            borderRadius: BorderRadius.circular(10),
+                                            border: Border.all(color: const Color(0xFF0D1F3C).withOpacity(0.15)),
+                                          ),
+                                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                                          child: Row(
+                                            children: [
+                                              Expanded(
+                                                child: TextField(
+                                                  controller: eCtrl,
+                                                  style: const TextStyle(fontSize: 14, color: Color(0xFF0D1F3C)),
+                                                  maxLines: 3,
+                                                  minLines: 1,
+                                                  decoration: const InputDecoration(
+                                                    border: InputBorder.none,
+                                                    isDense: true,
+                                                    hintText: 'Modifier votre avis...',
+                                                    hintStyle: TextStyle(color: Color(0xFFA0ABBE)),
+                                                  ),
+                                                ),
+                                              ),
+                                              const SizedBox(width: 8),
+                                              GestureDetector(
+                                                onTap: () => setSheet(() => activeReplyToId = null),
+                                                child: const Icon(Icons.close, color: Color(0xFF9AAAC0), size: 18),
+                                              ),
+                                              const SizedBox(width: 8),
+                                              GestureDetector(
+                                                onTap: () async {
+                                                  final txt = eCtrl.text.trim();
+                                                  if (txt.isEmpty) return;
+                                                  final avisId = int.tryParse(a['id'].toString()) ?? 0;
+                                                  final res = await AnnonceService.updateCommentaire(annonceId, avisId, txt);
+                                                  if (!mounted) return;
+                                                  if (res.success) {
+                                                    setSheet(() {
+                                                      final idx = avis.indexWhere((v) => v['id'] == a['id']);
+                                                      if (idx != -1) avis[idx]['contenu'] = txt;
+                                                      activeReplyToId = null;
+                                                    });
+                                                  }
+                                                },
+                                                child: Container(
+                                                  padding: const EdgeInsets.all(6),
+                                                  decoration: BoxDecoration(
+                                                    color: const Color(0xFF0D1F3C),
+                                                    borderRadius: BorderRadius.circular(8),
+                                                  ),
+                                                  child: const Icon(Icons.send_rounded, color: Colors.white, size: 15),
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                        )
+                                      : Padding(
+                                          padding: const EdgeInsets.only(left: 36),
+                                          child: Text(a['contenu'] ?? '', style: const TextStyle(fontSize: 13, color: Color(0xFF6B7A99), height: 1.4)),
+                                        ),
+                                ),
+                                if (activeReplyToId != -a['id'] && _isLoggedIn && a['is_author'] == true)
+                                  PopupMenuButton<String>(
+                                    icon: const Icon(Icons.more_vert, size: 18, color: Color(0xFF9AAAC0)),
+                                    padding: EdgeInsets.zero,
+                                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                                    onSelected: (value) async {
+                                      if (value == 'edit') {
+                                        setSheet(() => activeReplyToId = -a['id']);
+                                      } else if (value == 'delete') {
+                                        final ok = await showDialog<bool>(
+                                          context: context,
+                                          builder: (d) => AlertDialog(
+                                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                                            title: const Text('Supprimer votre avis ?'),
+                                            content: const Text('Cette action est irréversible.'),
+                                            actions: [
+                                              TextButton(onPressed: () => Navigator.pop(d, false), child: const Text('Annuler')),
+                                              TextButton(onPressed: () => Navigator.pop(d, true), child: const Text('Supprimer', style: TextStyle(color: Color(0xFFEF4444)))),
+                                            ],
+                                          ),
+                                        );
+                                        if (ok != true || !mounted) return;
+                                        final avisId = int.tryParse(a['id'].toString()) ?? 0;
+                                        final res = await AnnonceService.deleteCommentaire(annonceId, avisId);
+                                        if (!mounted) return;
+                                        if (res.success) setSheet(() => avis.removeWhere((v) => v['id'] == a['id']));
+                                      }
+                                    },
+                                    itemBuilder: (_) => [
+                                      const PopupMenuItem(value: 'edit', child: Row(children: [Icon(Icons.edit_outlined, size: 16, color: Color(0xFF6B7A99)), SizedBox(width: 8), Text('Modifier', style: TextStyle(fontSize: 13))])),
+                                      const PopupMenuItem(value: 'delete', child: Row(children: [Icon(Icons.delete_outline, size: 16, color: Color(0xFFEF4444)), SizedBox(width: 8), Text('Supprimer', style: TextStyle(color: Color(0xFFEF4444), fontSize: 13))])),
+                                    ],
+                                  ),
+                              ],
+                            ),
+                          ],
+                        );
+                      },
+                    ),
 
                     // Réponses existantes
                     if (userReponses.isNotEmpty)
                       ...userReponses.map((rep) {
                         final repAvatar = rep['avatar_user'];
                         final repName = rep['nom_user'] ?? nomUser;
-                        return Container(
-                          margin: const EdgeInsets.only(top: 8, left: 16),
-                          padding: const EdgeInsets.all(8),
-                          decoration: BoxDecoration(
-                              color: const Color(0xFFF5F7FA), borderRadius: BorderRadius.circular(8)),
-                          child: Row(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              const Icon(Icons.subdirectory_arrow_right, size: 14, color: Color(0xFFC9A84C)),
-                              const SizedBox(width: 6),
-                              CircleAvatar(
-                                radius: 11,
-                                backgroundColor: const Color(0xFFE8EDF5),
-                                backgroundImage: repAvatar != null ? NetworkImage(repAvatar) : null,
-                                child: repAvatar == null
-                                    ? const Icon(Icons.person, size: 11, color: Color(0xFF6B7A99))
-                                    : null,
+                        final repId = int.tryParse(rep['id'].toString()) ?? 0;
+                        return StatefulBuilder(
+                          builder: (ctxRep, setRepEdit) {
+                            bool isRepEditing = activeReplyToId == -repId;
+                            final repEditCtrl = TextEditingController(text: rep['contenu'] ?? '');
+                            return Container(
+                              margin: const EdgeInsets.only(top: 8, left: 16),
+                              padding: const EdgeInsets.all(12),
+                              decoration: BoxDecoration(
+                                  color: const Color(0xFFF5F7FA), borderRadius: BorderRadius.circular(10)),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Row(
+                                    crossAxisAlignment: CrossAxisAlignment.center,
+                                    children: [
+                                      const Icon(Icons.subdirectory_arrow_right, size: 14, color: Color(0xFFC9A84C)),
+                                      const SizedBox(width: 6),
+                                      CircleAvatar(
+                                        radius: 13,
+                                        backgroundColor: const Color(0xFFE8EDF5),
+                                        backgroundImage: repAvatar != null ? NetworkImage(repAvatar) : null,
+                                        child: repAvatar == null
+                                            ? const Icon(Icons.person, size: 13, color: Color(0xFF6B7A99))
+                                            : null,
+                                      ),
+                                      const SizedBox(width: 8),
+                                      Expanded(
+                                        child: Column(
+                                          crossAxisAlignment: CrossAxisAlignment.start,
+                                          children: [
+                                            Row(
+                                              crossAxisAlignment: CrossAxisAlignment.center,
+                                              children: [
+                                                Flexible(
+                                                  child: Text(repName,
+                                                      overflow: TextOverflow.ellipsis,
+                                                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Color(0xFF0D1F3C))),
+                                                ),
+                                                const SizedBox(width: 6),
+                                                const Text('·', style: TextStyle(color: Color(0xFF9AAAC0), fontSize: 12, fontWeight: FontWeight.bold)),
+                                                const SizedBox(width: 6),
+                                                Text(formatCommentDate(rep['created_at']),
+                                                    style: const TextStyle(fontSize: 10, color: Color(0xFF9AAAC0))),
+                                              ],
+                                            ),
+                                            const SizedBox(height: 2),
+                                            isRepEditing
+                                                ? Container(
+                                                    margin: const EdgeInsets.only(top: 4),
+                                                    decoration: BoxDecoration(
+                                                      color: Colors.white,
+                                                      borderRadius: BorderRadius.circular(10),
+                                                      border: Border.all(color: const Color(0xFF0D1F3C).withOpacity(0.15)),
+                                                    ),
+                                                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                                                    child: Row(
+                                                      children: [
+                                                        Expanded(
+                                                          child: TextField(
+                                                            controller: repEditCtrl,
+                                                            style: const TextStyle(fontSize: 13, color: Color(0xFF0D1F3C)),
+                                                            maxLines: 3,
+                                                            minLines: 1,
+                                                            decoration: const InputDecoration(
+                                                              border: InputBorder.none,
+                                                              isDense: true,
+                                                              hintText: 'Modifier votre réponse...',
+                                                              hintStyle: TextStyle(color: Color(0xFFA0ABBE)),
+                                                            ),
+                                                          ),
+                                                        ),
+                                                        const SizedBox(width: 8),
+                                                        GestureDetector(
+                                                          onTap: () => setSheet(() => activeReplyToId = null),
+                                                          child: const Icon(Icons.close, color: Color(0xFF9AAAC0), size: 18),
+                                                        ),
+                                                        const SizedBox(width: 8),
+                                                        GestureDetector(
+                                                          onTap: () async {
+                                                            final txt = repEditCtrl.text.trim();
+                                                            if (txt.isEmpty) return;
+                                                            final res = await AnnonceService.updateCommentaire(annonceId, repId, txt);
+                                                            if (!mounted) return;
+                                                            if (res.success) {
+                                                              setSheet(() {
+                                                                final idx = reponses.indexWhere((r) => r['id'] == rep['id']);
+                                                                if (idx != -1) reponses[idx]['contenu'] = txt;
+                                                                activeReplyToId = null;
+                                                              });
+                                                            }
+                                                          },
+                                                          child: Container(
+                                                            padding: const EdgeInsets.all(6),
+                                                            decoration: BoxDecoration(
+                                                              color: const Color(0xFF0D1F3C),
+                                                              borderRadius: BorderRadius.circular(8),
+                                                            ),
+                                                            child: const Icon(Icons.send_rounded, color: Colors.white, size: 15),
+                                                          ),
+                                                        ),
+                                                      ],
+                                                    ),
+                                                  )
+                                                : Text(rep['contenu'] ?? '', style: const TextStyle(fontSize: 13, color: Color(0xFF6B7A99), height: 1.4)),
+                                          ],
+                                        ),
+                                      ),
+                                      if (!isRepEditing && (showAsOwner || (_isLoggedIn && rep['is_author'] == true)))
+                                        PopupMenuButton<String>(
+                                          icon: const Icon(Icons.more_vert, size: 16, color: Color(0xFF9AAAC0)),
+                                          padding: EdgeInsets.zero,
+                                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                                          onSelected: (value) async {
+                                            if (value == 'edit') {
+                                              setSheet(() => activeReplyToId = -repId);
+                                            } else if (value == 'delete') {
+                                              final ok = await showDialog<bool>(
+                                                context: context,
+                                                builder: (d) => AlertDialog(
+                                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                                                  title: const Text('Supprimer la réponse ?'),
+                                                  content: const Text('Cette action est irréversible.'),
+                                                  actions: [
+                                                    TextButton(onPressed: () => Navigator.pop(d, false), child: const Text('Annuler')),
+                                                    TextButton(onPressed: () => Navigator.pop(d, true), child: const Text('Supprimer', style: TextStyle(color: Color(0xFFEF4444)))),
+                                                  ],
+                                                ),
+                                              );
+                                              if (ok != true || !mounted) return;
+                                              final res = await AnnonceService.deleteCommentaire(annonceId, repId);
+                                              if (!mounted) return;
+                                              if (res.success) setSheet(() => reponses.removeWhere((r) => r['id'] == rep['id']));
+                                            }
+                                          },
+                                          itemBuilder: (_) => [
+                                            const PopupMenuItem(value: 'edit', child: Row(children: [Icon(Icons.edit_outlined, size: 14, color: Color(0xFF6B7A99)), SizedBox(width: 8), Text('Modifier', style: TextStyle(fontSize: 12))])),
+                                            const PopupMenuItem(value: 'delete', child: Row(children: [Icon(Icons.delete_outline, size: 14, color: Color(0xFFEF4444)), SizedBox(width: 8), Text('Supprimer', style: TextStyle(color: Color(0xFFEF4444), fontSize: 12))])),
+                                          ],
+                                        ),
+                                    ],
+                                  ),
+                                ],
                               ),
-                              const SizedBox(width: 6),
-                              Expanded(
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Row(
-                                      children: [
-                                        Text(repName,
-                                            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 11, color: Color(0xFF0D1F3C))),
-                                        const SizedBox(width: 6),
-                                        Text(formatCommentDate(rep['created_at']),
-                                            style: const TextStyle(fontSize: 9, color: Color(0xFF9AAAC0))),
-                                      ],
-                                    ),
-                                    const SizedBox(height: 2),
-                                    Text(rep['contenu'] ?? '', style: const TextStyle(fontSize: 12, color: Color(0xFF6B7A99))),
-                                  ],
-                                ),
-                              ),
-                            ],
-                          ),
+                            );
+                          },
                         );
                       }),
 
                     // Formulaire de réponse pour l'owner si pas encore de réponse
                     if (showAsOwner && userReponses.isEmpty) ...[
-                      const SizedBox(height: 8),
+                      const SizedBox(height: 12),
                       if (activeReplyToId == reviewId) ...[
-                  Row(
-                    children: [
-                      Expanded(
-                        child: Container(
+                        Container(
+                          padding: const EdgeInsets.all(12),
                           decoration: BoxDecoration(
                             color: const Color(0xFFF5F7FA),
-                            borderRadius: BorderRadius.circular(12),
+                            borderRadius: BorderRadius.circular(16),
                             border: Border.all(color: const Color(0xFF0D1F3C).withOpacity(0.08)),
                           ),
-                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-                          child: TextField(
-                            controller: replyCtrl,
-                            style: const TextStyle(fontSize: 13, color: Color(0xFF0D1F3C)),
-                            decoration: const InputDecoration(
-                              hintText: 'Écrire une réponse...',
-                              hintStyle: TextStyle(color: Color(0xFFA0ABBE)),
-                              border: InputBorder.none,
-                              isDense: true,
-                            ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              Row(
+                                children: [
+                                  const Icon(Icons.reply, size: 14, color: Color(0xFFC9A84C)),
+                                  const SizedBox(width: 6),
+                                  Text(
+                                    'Répondre à ${a['nom_user'] ?? 'Anonyme'}',
+                                    style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Color(0xFFC9A84C)),
+                                  ),
+                                  const Spacer(),
+                                  GestureDetector(
+                                    onTap: () => setSheet(() => activeReplyToId = null),
+                                    child: const Icon(Icons.close, size: 18, color: Color(0xFF9AAAC0)),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 8),
+                              Row(
+                                children: [
+                                  Expanded(
+                                    child: Container(
+                                      decoration: BoxDecoration(
+                                        color: Colors.white,
+                                        borderRadius: BorderRadius.circular(12),
+                                        border: Border.all(color: const Color(0xFFE8EDF5)),
+                                      ),
+                                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                                      child: TextField(
+                                        controller: replyCtrl,
+                                        minLines: 2,
+                                        maxLines: 5,
+                                        style: const TextStyle(fontSize: 13, color: Color(0xFF0D1F3C)),
+                                        decoration: const InputDecoration(
+                                          hintText: 'Écrire une réponse détaillée...',
+                                          hintStyle: TextStyle(color: Color(0xFFA0ABBE)),
+                                          border: InputBorder.none,
+                                          isDense: true,
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  IconButton(
+                                    onPressed: () => sendReply(reviewId),
+                                    style: IconButton.styleFrom(
+                                      backgroundColor: const Color(0xFF0D1F3C),
+                                      foregroundColor: Colors.white,
+                                      padding: const EdgeInsets.all(12),
+                                    ),
+                                    icon: const Icon(Icons.send, size: 18),
+                                  ),
+                                ],
+                              ),
+                            ],
                           ),
                         ),
-                      ),
-                      const SizedBox(width: 8),
-                      IconButton(
-                        onPressed: () => sendReply(reviewId),
-                        style: IconButton.styleFrom(
-                          backgroundColor: const Color(0xFF0D1F3C),
-                          foregroundColor: Colors.white,
-                        ),
-                        icon: const Icon(Icons.send, size: 16),
-                      ),
-                    ],
-                  ),
                       ] else ...[
                         TextButton.icon(
                           onPressed: () => setSheet(() => activeReplyToId = reviewId),
                           icon: const Icon(Icons.reply, size: 14, color: Color(0xFFC9A84C)),
-                          label: const Text('Répondre', style: TextStyle(fontSize: 12, color: Color(0xFFC9A84C))),
-                          style: TextButton.styleFrom(padding: EdgeInsets.zero, minimumSize: const Size(50, 30)),
+                          label: const Text('Répondre à cet avis', style: TextStyle(fontSize: 12, color: Color(0xFFC9A84C), fontWeight: FontWeight.bold)),
+                          style: TextButton.styleFrom(
+                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                            backgroundColor: const Color(0xFFFAF8F0),
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                          ),
                         ),
                       ],
                     ],

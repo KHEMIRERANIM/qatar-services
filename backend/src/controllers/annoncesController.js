@@ -227,19 +227,26 @@ exports.getDetail = async (req, res) => {
     // Filtrer et séparer par type
     const currentUserId = req.user ? Number(req.user.id) : null;
     
-    // Commentaires classiques privés (visibles seulement propriétaire + auteur)
-    const filteredCommentaires = commentaires.filter(c => {
-      const type = c.type || 'commentaire';
-      if (type !== 'commentaire') return false;
-      if (currentUserId === null) return false;
-      return currentUserId === Number(annonce.user_id) || currentUserId === Number(c.user_id);
+    const mapComment = c => ({
+      ...c,
+      is_author: currentUserId ? Number(c.user_id) === currentUserId : false
     });
 
+    // Commentaires classiques privés (visibles seulement propriétaire + auteur)
+    const filteredCommentaires = commentaires
+      .filter(c => {
+        const type = c.type || 'commentaire';
+        if (type !== 'commentaire') return false;
+        if (currentUserId === null) return false;
+        return currentUserId === Number(annonce.user_id) || currentUserId === Number(c.user_id);
+      })
+      .map(mapComment);
+
     // Les avis (publics)
-    const avis = commentaires.filter(c => c.type === 'avis');
+    const avis = commentaires.filter(c => c.type === 'avis').map(mapComment);
 
     // Les réponses aux avis (publiques)
-    const reponses = commentaires.filter(c => c.type === 'reponse');
+    const reponses = commentaires.filter(c => c.type === 'reponse').map(mapComment);
 
     res.json({
       success: true,
@@ -638,20 +645,23 @@ exports.deleteCommentaire = async (req, res) => {
 
     const commentaire = commentaires[0];
 
-// 3. Vérifier l'autorisation
-  if (commentaire.type === 'avis') {
-    // Seul l'auteur de l'avis peut le supprimer (pas le propriétaire de l'annonce)
-    if (commentaire.user_id !== req.user.id) {
-      return res.status(403).json({ success: false, message: 'Seul l\'auteur de l\'avis peut le supprimer.' });
+    // 3. Vérifier l'autorisation
+    if (commentaire.type === 'avis') {
+      // Seul l'auteur de l'avis peut le supprimer (pas le propriétaire de l'annonce)
+      if (Number(commentaire.user_id) !== Number(req.user.id)) {
+        return res.status(403).json({ success: false, message: 'Seul l\'auteur de l\'avis peut le supprimer.' });
+      }
+    } else if (commentaire.type === 'reponse') {
+      // Seul l'auteur de la réponse peut la supprimer (propriétaire de l'annonce)
+      if (Number(commentaire.user_id) !== Number(req.user.id)) {
+        return res.status(403).json({ success: false, message: 'Seul l\'auteur de la réponse peut la supprimer.' });
+      }
+    } else {
+      // Pour les commentaires classiques : propriétaire de l'annonce OU auteur du commentaire
+      if (Number(annonce.user_id) !== Number(req.user.id) && Number(commentaire.user_id) !== Number(req.user.id)) {
+        return res.status(403).json({ success: false, message: 'Action non autorisée.' });
+      }
     }
-  } else if (commentaire.type === 'reponse') {
-    return res.status(403).json({ success: false, message: 'Les réponses ne peuvent pas être supprimées, seulement modifiées.' });
-  } else {
-    // Pour les commentaires classiques : propriétaire de l'annonce OU auteur
-    if (annonce.user_id !== req.user.id && commentaire.user_id !== req.user.id) {
-      return res.status(403).json({ success: false, message: 'Action non autorisée.' });
-    }
-  }
     // 4. Supprimer le commentaire et les réponses enfants si c'est un avis
     if (commentaire.type === 'avis') {
       await db.query("DELETE FROM commentaires WHERE parent_id = ?", [cid]);
@@ -731,12 +741,8 @@ exports.updateCommentaire = async (req, res) => {
       return res.status(404).json({ success: false, message: 'Commentaire introuvable.' });
     }
     const commentaire = commentaires[0];
-
-    if (commentaire.type !== 'reponse') {
-      return res.status(403).json({ success: false, message: 'Seules les réponses peuvent être modifiées.' });
-    }
-
-    if (Number(annonce.user_id) !== Number(req.user.id) || Number(commentaire.user_id) !== Number(req.user.id)) {
+    // L'auteur du commentaire (qu'il soit avis, réponse ou commentaire classique) peut le modifier
+    if (Number(commentaire.user_id) !== Number(req.user.id)) {
       return res.status(403).json({ success: false, message: 'Action non autorisée.' });
     }
 

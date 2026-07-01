@@ -270,4 +270,22 @@ class AnnonceService {
       return AnnonceResult(success: false, message: 'Erreur réseau.');
     }
   }
+
+  // PUT /api/annonces/:id/commentaires/:cid
+    static Future<AnnonceResult> updateCommentaire(int annonceId, int commentId, String contenu) async {
+      try {
+        final headers = await _authHeaders();
+        final response = await http
+            .put(Uri.parse('$baseUrl/api/annonces/$annonceId/commentaires/$commentId'),
+                headers: headers, body: jsonEncode({'contenu': contenu}))
+            .timeout(_timeout);
+        final data = jsonDecode(response.body);
+        if (response.statusCode == 200) return AnnonceResult(success: true);
+        return AnnonceResult(success: false, message: data['message'] ?? 'Erreur modification');
+      } on TimeoutException {
+        return AnnonceResult(success: false, message: 'Délai dépassé.');
+      } catch (e) {
+        return AnnonceResult(success: false, message: 'Erreur réseau.');
+      }
+    }
 }
