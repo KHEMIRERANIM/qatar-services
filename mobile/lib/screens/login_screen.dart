@@ -533,24 +533,7 @@ Future<void> _signInWithGoogle() async {
               Padding(
                 padding: const EdgeInsets.only(left: 20, right: 20, top: 24, bottom: 32),
                 child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-                  // Social buttons
-                  Row(children: [
-                    Expanded(child: _socialBtn(icon: Icons.g_mobiledata_rounded, label: 'Google', onTap: _signInWithGoogle)),
-                    const SizedBox(width: 12),
-                    Expanded(child: _socialBtn(icon: Icons.apple, label: 'Apple', onTap: _signInWithApple)),
-                  ]),
-                  const SizedBox(height: 20),
 
-                  // Divider
-                  Row(children: [
-                    Expanded(child: Container(height: 1, color: const Color(0xFFE8EDF5))),
-                    const Padding(
-                      padding: EdgeInsets.symmetric(horizontal: 12),
-                      child: Text('ou', style: TextStyle(fontSize: 12, color: Color(0xFFA0ABBE))),
-                    ),
-                    Expanded(child: Container(height: 1, color: const Color(0xFFE8EDF5))),
-                  ]),
-                  const SizedBox(height: 20),
 
                   // Segmented sliding toggle for login method
                   Container(
@@ -643,7 +626,7 @@ Future<void> _signInWithGoogle() async {
                     _inputBox(
                       controller: _identifierCtrl,
                       icon: Icons.mail_outline,
-                      hint: '+974 5XXX XXXX ou email',
+                      hint: 'email@exemple.com',
                       error: _identifierError,
                       keyboardType: TextInputType.emailAddress,
                     ),
@@ -686,24 +669,43 @@ Future<void> _signInWithGoogle() async {
                     const SizedBox(height: 24),
                   ],
 
-                  // Sign up
-                  Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-                    const Text("Pas de compte ? ",
-                        style: TextStyle(fontSize: 14, color: Color(0xFF6B7A99))),
-                    GestureDetector(
-                      onTap: widget.onRegister,
-                      child: const Text("S'inscrire",
-                          style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Color(0xFFC9A84C))),
-                    ),
-                  ]),
-                ]),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
+                  // Divider
+                                    Row(children: [
+                                      Expanded(child: Container(height: 1, color: const Color(0xFFE8EDF5))),
+                                      const Padding(
+                                        padding: EdgeInsets.symmetric(horizontal: 12),
+                                        child: Text('ou', style: TextStyle(fontSize: 12, color: Color(0xFFA0ABBE))),
+                                      ),
+                                      Expanded(child: Container(height: 1, color: const Color(0xFFE8EDF5))),
+                                    ]),
+                                    const SizedBox(height: 16),
+
+                                    // Social buttons
+                                    Row(children: [
+                                      Expanded(child: _socialBtn(icon: Icons.g_mobiledata_rounded, label: 'Google', onTap: _signInWithGoogle)),
+                                      const SizedBox(width: 12),
+                                      Expanded(child: _socialBtn(icon: Icons.apple, label: 'Apple', onTap: _signInWithApple)),
+                                    ]),
+                                    const SizedBox(height: 20),
+
+                                    // Sign up
+                                    Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+                                      const Text("Pas de compte ? ",
+                                          style: TextStyle(fontSize: 14, color: Color(0xFF6B7A99))),
+                                      GestureDetector(
+                                        onTap: widget.onRegister,
+                                        child: const Text("S'inscrire",
+                                            style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Color(0xFFC9A84C))),
+                                      ),
+                                    ]),
+                                  ]),
+                                                 ),
+                                               ],
+                                             ),
+                                           ),
+                                         ),
+                                       );
+                                     }
 
   // ── Shared Widgets ─────────────────────────────────────────────────────
 

@@ -191,7 +191,7 @@ exports.login = async (req, res) => {
 exports.profile = async (req, res) => {
   try {
     const [users] = await db.query(
-      `SELECT uuid, prenom, nom, email,
+      `SELECT id, uuid, prenom, nom, email,
        telephone, photo, date_naissance, ville, statut,
        created_at
        FROM users WHERE id = ?`,
@@ -278,6 +278,12 @@ exports.resetPassword = async (req, res) => {
         message: 'Lien invalide ou expiré'
       })
     }
+    // Validation mot de passe
+        if (!nouveau_mot_de_passe || nouveau_mot_de_passe.length < 8) {
+          return res.status(400).json({
+            message: 'Mot de passe minimum 8 caractères'
+          })
+        }
 
     const hashedPassword = await bcrypt.hash(
       nouveau_mot_de_passe, 10
@@ -805,7 +811,7 @@ exports.getMyAvisStats = async (req, res) => {
     )
 const [avisRecents] = await db.query(
   `SELECT
-    c.id, c.contenu, c.note, c.created_at,
+    c.id, c.user_id, c.contenu, c.note, c.created_at,
     CONCAT(u.prenom, ' ', u.nom) AS nom_user,
     u.photo AS avatar_user,
     a.categorie, a.titre
@@ -826,6 +832,124 @@ const [avisRecents] = await db.query(
       nb_avis_total: Number(globalStats[0]?.nb_avis_total ?? 0),
       par_categorie: parCategorie,
       avis_recents: avisRecents,
+    })
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message })
+  }
+}
+
+// ═══════════════════════════
+// READ — PROFIL PUBLIC D'UN UTILISATEUR
+// ═══════════════════════════
+exports.getPublicProfile = async (req, res) => {
+  try {
+    const userId = parseInt(req.params.id, 10)
+    if (!userId || Number.isNaN(userId)) {
+      return res.status(400).json({ success: false, message: 'ID utilisateur invalide' })
+    }
+
+    const [users] = await db.query(
+      `SELECT id, prenom, nom, photo, ville, telephone, created_at
+       FROM users WHERE id = ? AND deleted_at IS NULL`,
+      [userId]
+    )
+    if (users.length === 0) {
+      return res.status(404).json({ success: false, message: 'Utilisateur introuvable' })
+    }
+
+    const user = users[0]
+
+    const [prestataires] = await db.query(
+      `SELECT statut_verification, badge_verifie, badge_top_prestataire, pro_abonnement_actif
+       FROM prestataires WHERE user_id = ?`,
+      [userId]
+    )
+    const prestataire = prestataires[0] || {}
+    const isPro = prestataires.length > 0 && prestataire.badge_verifie === 1
+
+    const [globalStats] = await db.query(
+      `SELECT
+        ROUND(AVG(c.note), 1) AS note_globale,
+        COUNT(c.id) AS nb_avis_total
+       FROM commentaires c
+       JOIN annonces a ON a.id = c.annonce_id
+       WHERE a.user_id = ?
+         AND c.type = 'avis'
+         AND a.type_publication = 'offre'
+         AND c.note IS NOT NULL`,
+      [userId]
+    )
+
+    const [parCategorie] = await db.query(
+      `SELECT
+        a.categorie,
+        ROUND(AVG(c.note), 1) AS note,
+        COUNT(c.id) AS nb_avis
+       FROM commentaires c
+       JOIN annonces a ON a.id = c.annonce_id
+       WHERE a.user_id = ?
+         AND c.type = 'avis'
+         AND a.type_publication = 'offre'
+         AND c.note IS NOT NULL
+         AND a.categorie IS NOT NULL
+         AND a.categorie != ''
+       GROUP BY a.categorie
+       ORDER BY nb_avis DESC`,
+      [userId]
+    )
+
+    const [avisRecents] = await db.query(
+      `SELECT
+        c.id, c.user_id, c.contenu, c.note, c.created_at,
+        CONCAT(u.prenom, ' ', u.nom) AS nom_user,
+        u.photo AS avatar_user,
+        a.categorie, a.titre
+       FROM commentaires c
+       JOIN annonces a ON a.id = c.annonce_id
+       JOIN users u ON u.id = c.user_id
+       WHERE a.user_id = ?
+         AND c.type = 'avis'
+         AND a.type_publication = 'offre'
+       ORDER BY c.created_at DESC
+       LIMIT 10`,
+      [userId]
+    )
+
+    const [annonces] = await db.query(
+      `SELECT
+        a.id, a.titre, a.description, a.categorie, a.prix, a.ville,
+        a.type_paiement, a.type_publication, a.budget_max, a.urgent, a.urgent_until, a.created_at,
+        (SELECT url FROM annonce_photos WHERE annonce_id = a.id ORDER BY ordre ASC, id ASC LIMIT 1) AS premiere_photo,
+        (SELECT COUNT(*) FROM annonce_likes WHERE annonce_id = a.id) AS nb_likes,
+        (SELECT COUNT(*) FROM commentaires WHERE annonce_id = a.id AND type != 'avis' AND type != 'reponse') AS nb_commentaires,
+        (SELECT COUNT(*) FROM commentaires WHERE annonce_id = a.id AND type = 'avis') AS nb_avis
+       FROM annonces a
+       WHERE a.user_id = ? AND a.statut = 'active'
+       ORDER BY a.created_at DESC
+       LIMIT 20`,
+      [userId]
+    )
+
+    res.json({
+      success: true,
+      user: {
+        id: user.id,
+        prenom: user.prenom,
+        nom: user.nom,
+        photo: user.photo,
+        ville: user.ville,
+        telephone: user.telephone,
+        isPro,
+        badge_verifie: prestataire.badge_verifie === 1,
+        badge_top_prestataire: prestataire.badge_top_prestataire === 1,
+        pro_abonnement_actif: prestataire.pro_abonnement_actif === 1,
+        member_since: user.created_at,
+      },
+      note_globale: globalStats[0]?.note_globale ?? null,
+      nb_avis_total: Number(globalStats[0]?.nb_avis_total ?? 0),
+      par_categorie: parCategorie,
+      avis_recents: avisRecents,
+      annonces,
     })
   } catch (error) {
     res.status(500).json({ success: false, message: error.message })

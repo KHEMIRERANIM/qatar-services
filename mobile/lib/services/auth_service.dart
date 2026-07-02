@@ -198,6 +198,38 @@ static const String baseUrl = 'http://192.168.1.16:3000';
     }
   }
 
+  // GET /auth/users/:id/public
+  static Future<AuthResult> getPublicProfile(int userId) async {
+    final token = await TokenService.getToken();
+    if (token == null) {
+      return AuthResult(
+          success: false, message: 'Non authentifié', tokenExpired: true);
+    }
+    try {
+      var response = await http
+          .get(Uri.parse('$baseUrl/auth/users/$userId/public'), headers: _authHeaders(token))
+          .timeout(_timeout);
+
+      if (response.statusCode == 401 || response.statusCode == 403) {
+        final newToken = await refreshAccessToken();
+        if (newToken != null) {
+          response = await http
+              .get(Uri.parse('$baseUrl/auth/users/$userId/public'), headers: _authHeaders(newToken))
+              .timeout(_timeout);
+        } else {
+          await TokenService.clearAll();
+          return AuthResult(
+              success: false, message: 'Session expirée', tokenExpired: true);
+        }
+      }
+      final data = jsonDecode(response.body) as Map<String, dynamic>;
+      if (response.statusCode == 200) return AuthResult(success: true, data: data);
+      return AuthResult(success: false, message: data['message'] ?? 'Erreur');
+    } catch (e) {
+      return AuthResult(success: false, message: 'Erreur réseau');
+    }
+  }
+
   // GET /auth/profile/avis
   static Future<AuthResult> getMyAvisStats() async {
     final token = await TokenService.getToken();

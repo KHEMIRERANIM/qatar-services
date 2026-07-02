@@ -15,6 +15,7 @@ router.post('/check-phone', authController.checkPhone)
 router.post('/login-phone', authController.loginPhone)
 
 // Routes protégées
+router.get('/users/:id/public', authMiddleware, authController.getPublicProfile)
 router.get('/profile', authMiddleware, authController.profile)
 router.get('/profile/avis', authMiddleware, authController.getMyAvisStats)
 router.put('/profile/update', authMiddleware, authController.updateProfile)

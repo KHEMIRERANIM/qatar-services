@@ -4,7 +4,10 @@ import 'package:image_picker/image_picker.dart';
 import 'profile_screen.dart';
 import 'create_listing_screen.dart';
 import '../services/annonce_service.dart';
+import '../services/auth_service.dart';
 import '../services/token_service.dart';
+import '../widgets/user_avatar.dart';
+import '../utils/profile_navigation.dart';
 
 class HomeScreen extends StatefulWidget {
   final VoidCallback onLogout;
@@ -36,12 +39,36 @@ class _HomeScreenState extends State<HomeScreen> {
   int _currentPage = 1;
   int _totalAnnonces = 0;
   static const int _pageSize = 20;
+  int? _currentUserId;
 
   @override
   void initState() {
     super.initState();
+    _loadCurrentUserId();
     _loadFeed();
   }
+
+  Future<void> _loadCurrentUserId() async {
+    final token = await TokenService.getToken();
+    if (token == null) return;
+    final result = await AuthService.getProfile();
+    if (!mounted || !result.success || result.data == null) return;
+    final userData = result.data!['user'] ?? result.data!;
+    setState(() {
+      _currentUserId = int.tryParse(userData['id']?.toString() ?? '');
+    });
+  }
+
+  void _openUserProfile(int? userId) {
+    ProfileNavigation.open(
+      context,
+      userId: userId,
+      currentUserId: _currentUserId,
+      onOwnProfile: () => setState(() => _currentIndex = 2),
+      onAnnonceTap: (a) => _showOffreProposeeDetails(a, fromMineTab: false),    );
+  }
+
+  int? _userIdFrom(dynamic data) => int.tryParse(data?.toString() ?? '');
 
   @override
   void dispose() {
@@ -295,15 +322,17 @@ class _HomeScreenState extends State<HomeScreen> {
                   itemBuilder: (_, i) {
                     final l = likes[i];
                     final avatar = l['avatar_user'];
+                    final userId = _userIdFrom(l['user_id']);
                     return ListTile(
                       contentPadding: EdgeInsets.zero,
-                      leading: CircleAvatar(
+                      leading: UserAvatar(
                         radius: 18,
-                        backgroundColor: const Color(0xFFE8EDF5),
-                        backgroundImage: avatar != null ? NetworkImage(avatar) : null,
-                        child: avatar == null
-                            ? const Icon(Icons.person, size: 18, color: Color(0xFF6B7A99))
-                            : null,
+                        imageUrl: avatar?.toString(),
+                        name: l['nom_user']?.toString(),
+                        onTap: userId != null ? () {
+                          Navigator.pop(context);
+                          _openUserProfile(userId);
+                        } : null,
                       ),
                       title: Text(l['nom_user'] ?? 'Utilisateur',
                           style: const TextStyle(fontWeight: FontWeight.w600, color: Color(0xFF0D1F3C), fontSize: 14)),
@@ -893,6 +922,7 @@ class _HomeScreenState extends State<HomeScreen> {
             final String nomUser = displayData['nom_user'] ?? 'Inconnu';
             final String? telUser = displayData['tel_user'];
             final String? avatarUser = displayData['avatar_user'];
+            final int? ownerUserId = _userIdFrom(displayData['user_id']);
             final String description = displayData['description'] ?? '';
             final String ville = displayData['ville'] ?? '';
             final String emoji = _categoryEmoji(displayData['categorie']);
@@ -1042,6 +1072,7 @@ Future<void> sendReply(int parentId) async {
 
             Widget buildCommentTile(Map<String, dynamic> c, {bool showContact = false}) {
               final avatar = c['avatar_user'];
+              final userId = _userIdFrom(c['user_id']);
               final commentId = int.tryParse(c['id'].toString()) ?? 0;
               final bool isMsgAuthor = _isLoggedIn && c['is_author'] == true;
               final bool canDeleteMsg = _isLoggedIn && (c['is_author'] == true || showAsOwner);
@@ -1057,13 +1088,11 @@ Future<void> sendReply(int parentId) async {
                     Row(
                       crossAxisAlignment: CrossAxisAlignment.center,
                       children: [
-                        CircleAvatar(
+                        UserAvatar(
                           radius: 16,
-                          backgroundColor: const Color(0xFFE8EDF5),
-                          backgroundImage: avatar != null ? NetworkImage(avatar) : null,
-                          child: avatar == null
-                              ? const Icon(Icons.person, size: 16, color: Color(0xFF6B7A99))
-                              : null,
+                          imageUrl: avatar?.toString(),
+                          name: c['nom_user']?.toString(),
+                          onTap: userId != null ? () => _openUserProfile(userId) : null,
                         ),
                         const SizedBox(width: 10),
                         Expanded(
@@ -1201,6 +1230,7 @@ Future<void> sendReply(int parentId) async {
 
             Widget buildAvisTile(Map<String, dynamic> a) {
               final avatar = a['avatar_user'];
+              final userId = _userIdFrom(a['user_id']);
               final int rating = a['note'] ?? 5;
               final int reviewId = a['id'];
               final userReponses = reponses.where((r) => r['parent_id'] == reviewId).toList();
@@ -1218,13 +1248,11 @@ Future<void> sendReply(int parentId) async {
                     Row(
                       crossAxisAlignment: CrossAxisAlignment.center,
                       children: [
-                        CircleAvatar(
+                        UserAvatar(
                           radius: 14,
-                          backgroundColor: const Color(0xFFE8EDF5),
-                          backgroundImage: avatar != null ? NetworkImage(avatar) : null,
-                          child: avatar == null
-                              ? const Icon(Icons.person, size: 14, color: Color(0xFF6B7A99))
-                              : null,
+                          imageUrl: avatar?.toString(),
+                          name: a['nom_user']?.toString(),
+                          onTap: userId != null ? () => _openUserProfile(userId) : null,
                         ),
                         const SizedBox(width: 8),
                         Expanded(
@@ -1370,6 +1398,7 @@ Future<void> sendReply(int parentId) async {
                       ...userReponses.map((rep) {
                         final repAvatar = rep['avatar_user'];
                         final repName = rep['nom_user'] ?? nomUser;
+                        final repUserId = _userIdFrom(rep['user_id']);
                         final repId = int.tryParse(rep['id'].toString()) ?? 0;
                         return StatefulBuilder(
                           builder: (ctxRep, setRepEdit) {
@@ -1388,13 +1417,11 @@ Future<void> sendReply(int parentId) async {
                                     children: [
                                       const Icon(Icons.subdirectory_arrow_right, size: 14, color: Color(0xFFC9A84C)),
                                       const SizedBox(width: 6),
-                                      CircleAvatar(
+                                      UserAvatar(
                                         radius: 13,
-                                        backgroundColor: const Color(0xFFE8EDF5),
-                                        backgroundImage: repAvatar != null ? NetworkImage(repAvatar) : null,
-                                        child: repAvatar == null
-                                            ? const Icon(Icons.person, size: 13, color: Color(0xFF6B7A99))
-                                            : null,
+                                        imageUrl: repAvatar?.toString(),
+                                        name: repName,
+                                        onTap: repUserId != null ? () => _openUserProfile(repUserId) : null,
                                       ),
                                       const SizedBox(width: 8),
                                       Expanded(
@@ -1621,11 +1648,14 @@ Future<void> sendReply(int parentId) async {
                         // ── HEADER UTILISATEUR (Style Réseau Social) ──
                         Row(
                           children: [
-                            CircleAvatar(
+                            UserAvatar(
                               radius: 22,
-                              backgroundColor: const Color(0xFFE8EDF5),
-                              backgroundImage: avatarUser != null ? NetworkImage(avatarUser) : null,
-                              child: avatarUser == null ? const Icon(Icons.person, size: 22, color: Color(0xFF6B7A99)) : null
+                              imageUrl: avatarUser,
+                              name: nomUser,
+                              onTap: ownerUserId != null ? () {
+                                Navigator.pop(sheetCtx);
+                                _openUserProfile(ownerUserId);
+                              } : null,
                             ),
                             const SizedBox(width: 12),
                             Expanded(
@@ -2464,6 +2494,7 @@ const Icon(Icons.star_rounded, size: 20, color: Color(0xFFC9A84C)),
     final String titre = a['titre'] ?? '';
     final String nomUser = a['nom_user'] ?? 'Inconnu';
     final String? avatarUser = a['avatar_user'];
+    final int? ownerUserId = _userIdFrom(a['user_id']);
     final String? telUser = a['tel_user'];
     final String? premierePhoto = a['premiere_photo'];
     final String emoji = _categoryEmoji(a['categorie']);
@@ -2564,18 +2595,12 @@ final String typePublication = (a['type_publication'] ?? 'offre').toString().toL
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
                         Row(children: [
-                          Container(
-                            width: 30, height: 30,
-                            decoration: BoxDecoration(
-                              shape: BoxShape.circle,
-                              border: Border.all(color: const Color(0xFFC9A84C), width: 2),
-                            ),
-                            child: ClipOval(
-                              child: avatarUser != null
-                                  ? Image.network(avatarUser, fit: BoxFit.cover,
-                                      errorBuilder: (_, __, ___) => const Icon(Icons.person, size: 16, color: Color(0xFF6B7A99)))
-                                  : const Icon(Icons.person, size: 16, color: Color(0xFF6B7A99)),
-                            ),
+                          UserAvatar(
+                            size: 30,
+                            bordered: true,
+                            imageUrl: avatarUser,
+                            name: nomUser,
+                            onTap: ownerUserId != null ? () => _openUserProfile(ownerUserId) : null,
                           ),
                           const SizedBox(width: 8),
                           Text(nomUser,

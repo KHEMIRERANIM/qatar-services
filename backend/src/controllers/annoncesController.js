@@ -52,6 +52,7 @@ exports.getFeed = async (req, res) => {
         (SELECT COUNT(*) FROM annonce_likes WHERE annonce_id = a.id) AS nb_likes,
         (SELECT COUNT(*) FROM commentaires WHERE annonce_id = a.id AND type != 'avis' AND type != 'reponse') AS nb_commentaires,
         (SELECT COUNT(*) FROM commentaires WHERE annonce_id = a.id AND type = 'avis') AS nb_avis,
+        a.user_id,
         CONCAT(u.prenom, ' ', u.nom) AS nom_user,
         u.photo AS avatar_user,
         u.telephone AS tel_user

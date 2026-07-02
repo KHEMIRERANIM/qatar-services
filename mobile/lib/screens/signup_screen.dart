@@ -62,9 +62,9 @@ class _SignupScreenState extends State<SignupScreen> {
       if (_phoneController.text.length < 6) {
         _errors['phone'] = "Numéro invalide";
       }
-      if (_passwordController.text.length < 6) {
-        _errors['password'] = "Minimum 6 caractères";
-      }
+     if (_passwordController.text.length < 8) {
+       _errors['password'] = "Minimum 8 caractères";
+     }
       if (_confirmController.text != _passwordController.text) {
         _errors['confirm'] = "Ne correspond pas";
       }
@@ -429,7 +429,7 @@ class _SignupScreenState extends State<SignupScreen> {
                    _buildField(
                      key: "password",
                       label: "Mot de passe",
-                      placeholder: "Minimum 6 caractères",
+                      placeholder: "Minimum 8 caractères",
                       icon: Icons.lock_outline,
                       controller: _passwordController,
                       obscureText: !_showPassword,

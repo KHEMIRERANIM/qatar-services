@@ -8,6 +8,8 @@ import 'package:url_launcher/url_launcher.dart';
 import '../services/auth_service.dart';
 import '../services/pro_service.dart';
 import '../services/annonce_service.dart';
+import '../widgets/user_avatar.dart';
+import '../utils/profile_navigation.dart';
 import 'veriff_verification_screen.dart';
 import 'native_identity_verification_screen.dart';
 
@@ -66,6 +68,7 @@ class ProfileScreenState extends State<ProfileScreen> {
 
   List<Map<String, dynamic>> _myAnnonces = [];
   bool _isLoadingAnnonces = true;
+  int? _currentUserId;
 
   @override
   void initState() {
@@ -170,6 +173,7 @@ class ProfileScreenState extends State<ProfileScreen> {
       final userData = data['user'] ?? data;
       setState(() {
         _name = '${userData['prenom'] ?? userData['firstName'] ?? ''} ${userData['nom'] ?? userData['lastName'] ?? ''}'.trim();
+        _currentUserId = int.tryParse(userData['id']?.toString() ?? '');
         if (_name.isEmpty) _name = userData['name'] ?? userData['username'] ?? '';
         _email = userData['email'] ?? '';
         _phone = userData['telephone'] ?? userData['phone'] ?? '';
@@ -1096,6 +1100,7 @@ final villes = ['Doha', 'Al Rayyan', 'Al Wakrah', 'Umm Salal', 'Al Khor', 'Al Da
                     final r = _avisRecents[i];
                     final name = r['nom_user']?.toString() ?? 'Client';
                     final String? photoUser = r['avatar_user']?.toString();
+                    final reviewerId = int.tryParse(r['user_id']?.toString() ?? '');
                     final rating = int.tryParse(r['note']?.toString() ?? '5') ?? 5;
                     final comment = r['contenu']?.toString() ?? '';
                     final date = _formatRelativeDate(r['created_at']);
@@ -1105,29 +1110,18 @@ final villes = ['Doha', 'Al Rayyan', 'Al Wakrah', 'Umm Salal', 'Al Khor', 'Al Da
                       child: Row(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                       Container(
-                                                   width: 36,
-                                                   height: 36,
-                                                   decoration: const BoxDecoration(color: Color(0xFFE8EDF5), shape: BoxShape.circle),
-                                                   alignment: Alignment.center,
-                                                   child: ClipOval(
-                                                     child: (photoUser != null && photoUser.isNotEmpty)
-                                                         ? Image.network(
-                                                             photoUser,
-                                                             width: 36,
-                                                             height: 36,
-                                                             fit: BoxFit.cover,
-                                                             errorBuilder: (_, __, ___) => Text(
-                                                               name.isNotEmpty ? name[0].toUpperCase() : '?',
-                                                               style: const TextStyle(fontWeight: FontWeight.bold, color: Color(0xFF0D1F3C)),
-                                                             ),
-                                                           )
-                                                         : Text(
-                                                             name.isNotEmpty ? name[0].toUpperCase() : '?',
-                                                             style: const TextStyle(fontWeight: FontWeight.bold, color: Color(0xFF0D1F3C)),
-                                                           ),
-                                                   ),
-                                                 ),
+                          UserAvatar(
+                            radius: 18,
+                            imageUrl: photoUser,
+                            name: name,
+                            onTap: reviewerId != null
+                                ? () => ProfileNavigation.open(
+                                      context,
+                                      userId: reviewerId,
+                                      currentUserId: _currentUserId,
+                                    )
+                                : null,
+                          ),
                           const SizedBox(width: 10),
                           Expanded(
                             child: Column(
